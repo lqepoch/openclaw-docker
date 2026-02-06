@@ -1,0 +1,20 @@
+.git
+.github
+.DS_Store
+
+# Local/editor artifacts
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build and runtime leftovers
+node_modules
+dist
+build
+tmp
+*.log
+
+# Repo docs and metadata not needed in image context
+README.md
+AGENTS.md
