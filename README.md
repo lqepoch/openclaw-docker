@@ -148,7 +148,6 @@ docker run --rm -it \
 - 内置测试包含：
   - 基础命令测试（`node/npm/python/pip/git/aws/openclaw --version`）
   - 端口校验测试（`OPENCLAW_PORT=70000` 必须失败）
-- 构建缓存使用 `type=gha`，同一 Dockerfile 结构下会持续复用缓存层。
 
 需要仓库 Secrets：
 - `DOCKERHUB_USERNAME`
