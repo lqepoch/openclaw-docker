@@ -9,15 +9,16 @@ ENV LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false \
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
     OPENCLAW_HOME=/home/node/.openclaw \
     OPENCLAW_PORT=18789
 
 ARG OPENCLAW_VERSION=latest
 ARG TARGETOS
 ARG TARGETARCH
+ARG NODE_MAJOR=20
 
 # 使用 dnf 安装运行时与工具链（包管理优先）：
-# - nodejs：openclaw CLI 依赖（优先安装新版本，失败则自动降级）。
 # - python3/pip：Python 运行时与 boto3 依赖。
 # - git/git-lfs：你要求的 CI/CD 与仓库操作工具。
 RUN set -eux; \
@@ -33,20 +34,34 @@ RUN set -eux; \
       gzip \
       tar \
       unzip \
+      xz \
       shadow-utils; \
-    for pkg in nodejs24 nodejs22 nodejs20 nodejs; do \
-      if dnf install -y --setopt=install_weak_deps=False "${pkg}" nodejs-npm || dnf install -y --setopt=install_weak_deps=False "${pkg}"; then \
-        break; \
-      fi; \
-    done; \
-    if ! command -v npm >/dev/null 2>&1; then \
-      dnf install -y --setopt=install_weak_deps=False nodejs-npm || dnf install -y --setopt=install_weak_deps=False npm; \
-    fi; \
-    node --version; \
-    npm --version; \
     python3 --version; \
     dnf clean all; \
     rm -rf /var/cache/dnf
+
+# 安装 Node.js 20+（openclaw CLI 依赖）
+# 避免 Amazon Linux repo 的 nodejs 版本漂移，使用 Node.js 官方二进制发行版。
+RUN set -eux; \
+    case "${TARGETARCH:-$(uname -m)}" in \
+      amd64|x86_64) NODE_ARCH="x64" ;; \
+      arm64|aarch64) NODE_ARCH="arm64" ;; \
+      *) echo "Unsupported arch for node: ${TARGETARCH:-$(uname -m)}" >&2; exit 1 ;; \
+    esac; \
+    PYBIN="$(command -v python3 || command -v python)"; \
+    NODE_VERSION="$("${PYBIN}" - <<'PY'\nimport json\nimport sys\nimport urllib.request\n\nmajor = int(sys.argv[1])\nurl = 'https://nodejs.org/dist/index.json'\nreq = urllib.request.Request(url, headers={'User-Agent': 'openclaw-docker'})\nwith urllib.request.urlopen(req, timeout=30) as resp:\n    data = json.load(resp)\n\n# index.json 按版本从新到旧排序：选第一个匹配 major 的版本。\nfor item in data:\n    v = (item.get('version') or '').lstrip('v')\n    if v.split('.', 1)[0].isdigit() and int(v.split('.', 1)[0]) == major:\n        print(v)\n        raise SystemExit(0)\n\nprint(f'Failed to resolve node v{major} version', file=sys.stderr)\nraise SystemExit(1)\nPY\n\"${NODE_MAJOR}\")"; \
+    tmp="$(mktemp -d)"; \
+    cd "${tmp}"; \
+    node_tgz="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"; \
+    base="https://nodejs.org/dist/v${NODE_VERSION}"; \
+    curl -fsSLO "${base}/${node_tgz}"; \
+    curl -fsSLO "${base}/SHASUMS256.txt"; \
+    grep " ${node_tgz}\$" SHASUMS256.txt | sha256sum -c -; \
+    tar -xJf "${node_tgz}" -C /usr/local --strip-components=1; \
+    /usr/local/bin/node --version; \
+    /usr/local/bin/npm --version; \
+    cd /; \
+    rm -rf "${tmp}"
 
 # 安装 AWS CLI v2（官方安装包，避免不同 Amazon Linux repo 包名差异导致失败）
 RUN set -eux; \
@@ -67,14 +82,9 @@ RUN set -eux; \
 # 安装 GitHub CLI（gh）
 # 按 GitHub 官方 RPM 指南安装（兼容 Amazon Linux）。
 RUN set -eux; \
-    if dnf --version 2>/dev/null | head -n1 | grep -q '^dnf5'; then \
-      dnf install -y --setopt=install_weak_deps=False dnf5-plugins; \
-      dnf config-manager addrepo --from-repofile=https://cli.github.com/packages/rpm/gh-cli.repo; \
-    else \
-      dnf install -y --setopt=install_weak_deps=False 'dnf-command(config-manager)'; \
-      dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo; \
-    fi; \
-    dnf install -y --setopt=install_weak_deps=False gh --repo gh-cli; \
+    dnf install -y --setopt=install_weak_deps=False 'dnf-command(config-manager)'; \
+    dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo; \
+    dnf install -y --setopt=install_weak_deps=False gh; \
     gh --version; \
     dnf clean all; \
     rm -rf /var/cache/dnf

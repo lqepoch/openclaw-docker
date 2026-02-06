@@ -39,6 +39,8 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
+          build-args: |
+            NODE_MAJOR=24
           tags: local/${{ env.IMAGE_NAME }}:amd64-test
 
       - name: 运行基础功能测试
