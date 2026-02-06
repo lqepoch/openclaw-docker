@@ -151,3 +151,42 @@ jobs:
           git tag "${MARKER_TAG}"
           git push origin "refs/tags/${MARKER_TAG}"
 
+  sync-latest:
+    name: 同步 latest 标签（无需重新构建）
+    needs: detect
+    if: needs.detect.outputs.should_build == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 登录 Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 拉取并同步 latest
+        env:
+          UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+
+          dockerhub_repo="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
+          ghcr_repo="ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+
+          echo "同步 Docker Hub latest -> ${UPSTREAM_TAG}"
+          docker pull "${dockerhub_repo}:${UPSTREAM_TAG}"
+          docker tag "${dockerhub_repo}:${UPSTREAM_TAG}" "${dockerhub_repo}:latest"
+          docker push "${dockerhub_repo}:latest"
+
+          echo "同步 GHCR latest -> ${UPSTREAM_TAG}"
+          docker pull "${ghcr_repo}:${UPSTREAM_TAG}"
+          docker tag "${ghcr_repo}:${UPSTREAM_TAG}" "${ghcr_repo}:latest"
+          docker push "${ghcr_repo}:latest"
+
