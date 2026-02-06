@@ -14,6 +14,8 @@ ENV LANG=C.UTF-8 \
 
 ARG OPENCLAW_VERSION=latest
 ARG NODE_MAJOR=24
+ARG GH_VERSION=2.76.0
+ARG GIT_LFS_VERSION=3.7.0
 
 # 使用 Ubuntu 24.04（最新 LTS）并通过 apt 安装基础工具链。
 # Node.js 通过 nodejs.org 官方 tarball 安装，避免第三方 apt 源不稳定导致构建失败。
@@ -23,14 +25,36 @@ RUN apt-get update && \
       curl \
       gnupg \
       xz-utils && \
-    apt-get install -y --no-install-recommends \
+    if ! apt-get install -y --no-install-recommends \
       git \
       git-lfs \
       awscli \
       python3 \
       python3-venv \
       python3-pip \
-      gh && \
+      gh; then \
+      apt-get install -y --no-install-recommends \
+        git \
+        awscli \
+        python3 \
+        python3-venv \
+        python3-pip; \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64|arm64) dl_arch="$arch" ;; \
+        *) echo "unsupported arch for gh/git-lfs tarball: $arch" >&2; exit 1 ;; \
+      esac; \
+      curl -fsSLo /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${dl_arch}.tar.gz"; \
+      tar -xzf /tmp/gh.tar.gz -C /tmp; \
+      install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${dl_arch}/bin/gh" /usr/local/bin/gh; \
+      rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_${dl_arch}"; \
+      curl -fsSLo /tmp/git-lfs.tar.gz "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-${dl_arch}-v${GIT_LFS_VERSION}.tar.gz"; \
+      mkdir -p /tmp/git-lfs; \
+      tar -xzf /tmp/git-lfs.tar.gz -C /tmp/git-lfs; \
+      lfs_install_script="$(find /tmp/git-lfs -maxdepth 3 -type f -name install.sh | head -n1)"; \
+      [ -n "$lfs_install_script" ] && bash "$lfs_install_script"; \
+      rm -rf /tmp/git-lfs /tmp/git-lfs.tar.gz; \
+    fi && \
     python3 - <<'PY' >/tmp/node-version.txt
 import json
 import os
