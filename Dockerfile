@@ -12,6 +12,8 @@ ENV LANG=C.UTF-8 \
     OPENCLAW_HOME=/home/node/.openclaw \
     OPENCLAW_PORT=18789
 
+ARG OPENCLAW_VERSION=latest
+
 # 使用 dnf 安装运行时与工具链（包管理优先）：
 # - nodejs24：openclaw CLI 依赖。
 # - python3.13/pip：Python 运行时与 boto3 依赖。
@@ -33,7 +35,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
 RUN if ! command -v node >/dev/null 2>&1 && command -v node-24 >/dev/null 2>&1; then ln -sf /usr/bin/node-24 /usr/local/bin/node; fi && \
     if ! command -v npm >/dev/null 2>&1 && command -v npm-24 >/dev/null 2>&1; then ln -sf /usr/bin/npm-24 /usr/local/bin/npm; fi && \
     node --version && npm --version && \
-    npm install -g --omit=dev --no-audit openclaw@latest && \
+    npm install -g --omit=dev --no-audit "openclaw@${OPENCLAW_VERSION}" && \
     npm cache clean --force && \
     python3.13 -m pip install --no-cache-dir --upgrade pip boto3
 
