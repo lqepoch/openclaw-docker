@@ -141,9 +141,13 @@ docker run --rm -it \
 - push tag（如 `v1.0.0`）
 - 手动触发（`workflow_dispatch`）
 
-构建提速策略（已启用）：
-- `main` 分支默认只构建 `linux/amd64`（更快，适合日常迭代）。
-- 仅在 `tag` 发布时构建 `linux/amd64,linux/arm64`（用于正式发布）。
+构建与发布策略（已启用）：
+- 并行分机（两个 runner）分别构建并测试：`linux/amd64`、`linux/arm64`。
+- 两个架构都测试成功后，才会进入最终推送步骤（Docker Hub + GHCR）。
+- 任一架构构建或测试失败：不会推送任何镜像标签。
+- 内置测试包含：
+  - 基础命令测试（`node/npm/python/pip/git/aws/openclaw --version`）
+  - 端口校验测试（`OPENCLAW_PORT=70000` 必须失败）
 - 构建缓存使用 `type=gha`，同一 Dockerfile 结构下会持续复用缓存层。
 
 需要仓库 Secrets：
