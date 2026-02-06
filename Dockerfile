@@ -31,6 +31,9 @@ RUN dnf install -y --setopt=install_weak_deps=False \
       awscli-2 \
       ca-certificates \
       curl-minimal \
+      coreutils \
+      findutils \
+      grep \
       gzip \
       tar \
       shadow-utils && \
@@ -46,7 +49,9 @@ RUN set -eux; \
       *) echo "Unsupported arch for gh: ${TARGETARCH:-$(uname -m)}" >&2; exit 1 ;; \
     esac; \
     if [ "${GH_VERSION}" = "latest" ]; then \
-      GH_VERSION="$(python3.13 - <<'PY'\nimport json\nimport sys\nimport urllib.request\n\nurl = 'https://api.github.com/repos/cli/cli/releases/latest'\nreq = urllib.request.Request(url, headers={'User-Agent': 'openclaw-docker'})\nwith urllib.request.urlopen(req, timeout=30) as resp:\n    data = json.load(resp)\ntag = data.get('tag_name') or ''\nif tag.startswith('v'):\n    tag = tag[1:]\nif not tag:\n    print('Failed to resolve gh latest version', file=sys.stderr)\n    sys.exit(1)\nprint(tag)\nPY)"; \
+      PYBIN="$(command -v python3.13 || command -v python3 || command -v python)"; \
+      echo "Resolve GH_VERSION=latest via ${PYBIN}"; \
+      GH_VERSION="$("${PYBIN}" - <<'PY'\nimport json\nimport sys\nimport urllib.request\n\nurl = 'https://api.github.com/repos/cli/cli/releases/latest'\nreq = urllib.request.Request(url, headers={'User-Agent': 'openclaw-docker'})\nwith urllib.request.urlopen(req, timeout=30) as resp:\n    data = json.load(resp)\ntag = data.get('tag_name') or ''\nif tag.startswith('v'):\n    tag = tag[1:]\nif not tag:\n    print('Failed to resolve gh latest version', file=sys.stderr)\n    sys.exit(1)\nprint(tag)\nPY)"; \
     fi; \
     tmp="$(mktemp -d)"; \
     cd "${tmp}"; \
