@@ -8,6 +8,12 @@ umask 027
 # 如需在容器外完全自行管理 openclaw 配置，可设置为 false。
 : "${OPENCLAW_AUTO_CONFIG:=true}"
 
+# 是否强制要求 GitHub 登录验证（缺少 token 或验证失败会直接退出）。
+: "${OPENCLAW_GITHUB_AUTH_REQUIRED:=false}"
+
+# GitHub 相关配置（默认 github.com；企业版可覆盖）。
+: "${GITHUB_HOST:=github.com}"
+
 # 为了易用性，同时兼容单数/复数两种环境变量命名。
 if [ -n "${DISCORD_GUILD_ID:-}" ] && [ -z "${DISCORD_GUILD_IDS:-}" ]; then
   DISCORD_GUILD_IDS="${DISCORD_GUILD_ID}"
@@ -33,6 +39,78 @@ validate_port() {
   fi
 }
 
+resolve_github_token() {
+  GITHUB_AUTH_TOKEN=""
+  GITHUB_AUTH_TOKEN_SOURCE=""
+
+  if [ -n "${GH_TOKEN:-}" ]; then
+    GITHUB_AUTH_TOKEN="${GH_TOKEN}"
+    GITHUB_AUTH_TOKEN_SOURCE="GH_TOKEN"
+    return
+  fi
+
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    GITHUB_AUTH_TOKEN="${GITHUB_TOKEN}"
+    GITHUB_AUTH_TOKEN_SOURCE="GITHUB_TOKEN"
+    return
+  fi
+}
+
+configure_git_auth() {
+  if [ -z "${GITHUB_AUTH_TOKEN:-}" ]; then
+    return
+  fi
+
+  GIT_CREDENTIALS_FILE="${HOME}/.git-credentials"
+
+  # 仅使用标准 HTTPS 凭据存储，避免每次 git 操作都重复交互。
+  git config --global credential.helper "store --file=${GIT_CREDENTIALS_FILE}"
+  git config --global credential.useHttpPath true
+
+  umask 077
+  printf 'https://x-access-token:%s@%s\n' "${GITHUB_AUTH_TOKEN}" "${GITHUB_HOST}" > "${GIT_CREDENTIALS_FILE}"
+  chmod 600 "${GIT_CREDENTIALS_FILE}"
+  echo "[entrypoint] 已自动配置 GitHub token 凭据（${GITHUB_AUTH_TOKEN_SOURCE}）"
+}
+
+ensure_github_auth() {
+  if ! command -v gh >/dev/null 2>&1; then
+    if [ "${OPENCLAW_GITHUB_AUTH_REQUIRED}" = "true" ]; then
+      echo "[entrypoint] 缺少 gh 命令，无法进行 GitHub 登录验证（OPENCLAW_GITHUB_AUTH_REQUIRED=true）" >&2
+      exit 1
+    fi
+    echo "[entrypoint] 未安装 gh，跳过 GitHub 登录验证"
+    return
+  fi
+
+  if [ -z "${GITHUB_AUTH_TOKEN:-}" ]; then
+    if [ "${OPENCLAW_GITHUB_AUTH_REQUIRED}" = "true" ]; then
+      echo "[entrypoint] 缺少 GH_TOKEN 或 GITHUB_TOKEN，无法进行 GitHub 登录验证（OPENCLAW_GITHUB_AUTH_REQUIRED=true）" >&2
+      exit 1
+    fi
+    echo "[entrypoint] 未提供 GH_TOKEN/GITHUB_TOKEN，跳过 GitHub 登录验证"
+    return
+  fi
+
+  if gh auth status -h "${GITHUB_HOST}" >/dev/null 2>&1; then
+    echo "[entrypoint] GitHub 登录验证通过（gh auth status -h ${GITHUB_HOST}）"
+    return
+  fi
+
+  umask 077
+  if printf '%s' "${GITHUB_AUTH_TOKEN}" | gh auth login --hostname "${GITHUB_HOST}" --with-token >/dev/null 2>&1; then
+    echo "[entrypoint] 已完成 GitHub 登录验证（${GITHUB_AUTH_TOKEN_SOURCE} -> gh auth login）"
+    return
+  fi
+
+  if [ "${OPENCLAW_GITHUB_AUTH_REQUIRED}" = "true" ]; then
+    echo "[entrypoint] GitHub 登录验证失败（token 无效或权限不足？）" >&2
+    exit 1
+  fi
+
+  echo "[entrypoint] GitHub 登录验证失败，继续启动（可设置 OPENCLAW_GITHUB_AUTH_REQUIRED=true 强制失败退出）" >&2
+}
+
 apply_base_config() {
   echo "[entrypoint] 正在应用 OpenClaw 基础配置..."
   openclaw config set 'agents.defaults.thinkingDefault' 'medium'
@@ -47,7 +125,7 @@ apply_base_config() {
 }
 
 build_discord_guilds_json() {
-  python3 - <<'PY'
+  python3.13 - <<'PY'
 import json
 import os
 import re
@@ -96,10 +174,9 @@ PY
 }
 
 validate_port
-
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  echo "[entrypoint] 检测到 GITHUB_TOKEN，但当前镜像已改为 gh auth login 流程，忽略该变量"
-fi
+resolve_github_token
+configure_git_auth
+ensure_github_auth
 
 if [ "${OPENCLAW_AUTO_CONFIG}" = "true" ]; then
   apply_base_config

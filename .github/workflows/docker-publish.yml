@@ -46,7 +46,7 @@ jobs:
           docker run --rm \
             -e OPENCLAW_AUTO_CONFIG=false \
             local/${{ env.IMAGE_NAME }}:amd64-test \
-            sh -lc "node --version && npm --version && python3 --version && pip3 --version && git --version && aws --version && openclaw --version"
+            sh -lc "node --version && npm --version && python3 --version && pip3 --version && git --version && gh --version && aws --version && openclaw --version"
 
       - name: 运行端口校验测试
         run: |

@@ -1,7 +1,6 @@
 # OpenClaw Docker 使用教程
 
 本教程只讲如何使用镜像部署与初始化 OpenClaw。
-当前镜像基础系统为 `Ubuntu 24.04 LTS`（最新 LTS）。
 
 ## 0. 拉取镜像
 
@@ -28,15 +27,20 @@ docker volume create openclaw-data
 ```bash
 docker run --rm -it \
   -v openclaw-data:/home/node/.openclaw \
+  -e GH_TOKEN="<YOUR_GITHUB_TOKEN>" \
   --entrypoint sh \
   lqepoch/openclaw:latest
 ```
 
-在容器里按顺序执行：
+在容器里先做 GitHub 登录验证（必须先做）：
 
 ```bash
-gh auth login --git-protocol https --web
-gh auth setup-git
+gh auth status -h github.com || printf '%s' "${GH_TOKEN}" | gh auth login --hostname github.com --with-token
+```
+
+然后按顺序执行：
+
+```bash
 openclaw config set gateway.mode local
 openclaw doctor --fix
 openclaw onboard --install-daemon
@@ -48,8 +52,6 @@ openclaw onboard --install-daemon
 2. 执行 `exit` 退出容器。
 
 说明：
-- 先执行 `gh auth login`，避免后续 GitHub 相关操作要求手动输入 token。
-- `gh auth setup-git` 会把 git 凭据助手切到 GitHub CLI，后续 `git clone/pull` 走同一登录态。
 - `gateway.mode local` 不设置时，gateway 可能会被拦截启动。
 - `doctor --fix` 用于自动修复建议项。
 - `openclaw onboard --install-daemon` 按你的要求保留在初始化流程中。
@@ -62,6 +64,8 @@ openclaw onboard --install-daemon
 docker run -d --name openclaw \
   --restart unless-stopped \
   -v openclaw-data:/home/node/.openclaw \
+  -e GH_TOKEN="<YOUR_GITHUB_TOKEN>" \
+  -e OPENCLAW_GITHUB_AUTH_REQUIRED=true \
   -e DISCORD_GUILD_IDS="<YOUR_PRIVATE_GUILD_IDS>" \
   -e DISCORD_USER_IDS="<YOUR_PRIVATE_USER_IDS>" \
   -p 18789:18789 \
@@ -73,7 +77,11 @@ docker run -d --name openclaw \
 ```
 
 说明：
-- 镜像内已预装 `gh`，并将 `GH_CONFIG_DIR` 固定为 `/home/node/.openclaw/gh`，因此 `gh auth login` 的登录态会跟随 `openclaw-data` 卷持久化。
+- 推荐使用 `GH_TOKEN`（GitHub CLI 的标准变量），也兼容 `GITHUB_TOKEN`。
+- 只要传入 `GH_TOKEN`/`GITHUB_TOKEN`，容器启动时会自动完成：
+  - GitHub HTTPS 凭据配置（写入 `~/.git-credentials` 并启用 `credential.helper store`）。
+  - GitHub 登录验证（`gh auth status`，必要时自动 `gh auth login --with-token`）。
+- `OPENCLAW_GITHUB_AUTH_REQUIRED=true` 会在缺少 token 或验证失败时直接退出，避免后续初始化步骤失败才暴露问题。
 - `DISCORD_*_IDS` 支持逗号或空格分隔多个 ID。
 - 上述区间映射默认是 TCP；如需 UDP，请额外加 `-p 11001-20000:1001-10000/udp`。
 
