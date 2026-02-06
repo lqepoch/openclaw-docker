@@ -141,6 +141,11 @@ docker run --rm -it \
 - push tag（如 `v1.0.0`）
 - 手动触发（`workflow_dispatch`）
 
+构建提速策略（已启用）：
+- `main` 分支默认只构建 `linux/amd64`（更快，适合日常迭代）。
+- 仅在 `tag` 发布时构建 `linux/amd64,linux/arm64`（用于正式发布）。
+- 构建缓存使用 `type=gha`，同一 Dockerfile 结构下会持续复用缓存层。
+
 需要仓库 Secrets：
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`

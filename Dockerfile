@@ -16,8 +16,7 @@ ENV LANG=C.UTF-8 \
 # - nodejs24：openclaw CLI 依赖。
 # - python3.13/pip：Python 运行时与 boto3 依赖。
 # - git/git-lfs/awscli-2：你要求的 CI/CD 与仓库操作工具。
-RUN dnf update -y && \
-    dnf install -y --setopt=install_weak_deps=False \
+RUN dnf install -y --setopt=install_weak_deps=False \
       nodejs24 \
       nodejs24-npm \
       python3.13 \
