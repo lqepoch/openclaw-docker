@@ -30,7 +30,7 @@ RUN dnf install -y --setopt=install_weak_deps=False \
       git-lfs \
       awscli-2 \
       ca-certificates \
-      curl \
+      curl-minimal \
       gzip \
       tar \
       shadow-utils && \
