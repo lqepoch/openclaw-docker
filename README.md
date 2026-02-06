@@ -15,6 +15,14 @@
 docker build -t openclaw:local .
 ```
 
+## 2.1 安全加固（已内置）
+
+- 默认使用非 root 用户（UID 1000）运行。
+- 启动脚本会校验 `OPENCLAW_PORT`（必须是 `1-65535` 的数字）。
+- Discord 的 `guild/user/channel` ID 仅接受纯数字，非法值会被自动过滤。
+- 镜像安装过程关闭弱依赖并清理包缓存，减少攻击面。
+- 已内置 `HEALTHCHECK`，用于检测 gateway 端口可用性。
+
 ## 3. 启动时自动配置 OpenClaw（你要求的参数）
 
 容器启动时会自动执行以下配置：
@@ -65,6 +73,7 @@ docker run --rm -it \
   - `channels` 按你传入的 channel ID 全量 allow
 
 如果没传 `DISCORD_CHANNEL_IDS`，会自动设置该 guild 的 `channels."*"` 为 allow。
+如果传入了非数字 ID，会被自动忽略（不会写入配置）。
 
 ## 5. 端口映射教程（你要的双区间）
 
@@ -104,6 +113,21 @@ docker run --rm -it \
 ```bash
 docker run --rm -it \
   -e OPENCLAW_AUTO_CONFIG=false \
+  -p 18789:18789 \
+  openclaw:local
+```
+
+## 7.1 安全启动参数（推荐）
+
+生产环境建议增加以下 Docker 安全参数：
+
+```bash
+docker run --rm -it \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop=ALL \
+  --security-opt no-new-privileges:true \
+  --pids-limit 256 \
   -p 18789:18789 \
   openclaw:local
 ```

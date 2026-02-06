@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -eu
+umask 027
 
 # OpenClaw 文档中的默认 gateway 端口。
 : "${OPENCLAW_PORT:=18789}"
@@ -17,6 +18,20 @@ fi
 if [ -n "${DISCORD_CHANNEL_ID:-}" ] && [ -z "${DISCORD_CHANNEL_IDS:-}" ]; then
   DISCORD_CHANNEL_IDS="${DISCORD_CHANNEL_ID}"
 fi
+
+validate_port() {
+  case "${OPENCLAW_PORT}" in
+    ''|*[!0-9]*)
+      echo "[entrypoint] OPENCLAW_PORT 非法（必须是数字）: ${OPENCLAW_PORT}" >&2
+      exit 1
+      ;;
+  esac
+
+  if [ "${OPENCLAW_PORT}" -lt 1 ] || [ "${OPENCLAW_PORT}" -gt 65535 ]; then
+    echo "[entrypoint] OPENCLAW_PORT 超出范围（1-65535）: ${OPENCLAW_PORT}" >&2
+    exit 1
+  fi
+}
 
 apply_base_config() {
   echo "[entrypoint] 正在应用 OpenClaw 基础配置..."
@@ -45,9 +60,14 @@ def parse_list(value: str):
     return [x for x in re.split(r"[\s,]+", value.strip()) if x]
 
 
-guild_ids = parse_list(os.getenv("DISCORD_GUILD_IDS", ""))
-user_ids = parse_list(os.getenv("DISCORD_USER_IDS", ""))
-channel_ids = parse_list(os.getenv("DISCORD_CHANNEL_IDS", ""))
+def valid_discord_id(v: str) -> bool:
+    # Discord snowflake 为纯数字，这里只接受数字，避免错误或脏数据写入配置。
+    return v.isdigit()
+
+
+guild_ids = [x for x in parse_list(os.getenv("DISCORD_GUILD_IDS", "")) if valid_discord_id(x)]
+user_ids = [x for x in parse_list(os.getenv("DISCORD_USER_IDS", "")) if valid_discord_id(x)]
+channel_ids = [x for x in parse_list(os.getenv("DISCORD_CHANNEL_IDS", "")) if valid_discord_id(x)]
 
 cfg = {
     "*": {
@@ -74,6 +94,8 @@ for gid in guild_ids:
 print(json.dumps(cfg, separators=(",", ":")))
 PY
 }
+
+validate_port
 
 if [ "${OPENCLAW_AUTO_CONFIG}" = "true" ]; then
   apply_base_config
