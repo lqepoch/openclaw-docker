@@ -69,6 +69,10 @@ COPY docker/entrypoint.sh /usr/local/bin/openclaw-entrypoint.sh
 RUN chmod +x /usr/local/bin/openclaw-entrypoint.sh
 
 WORKDIR /workspace
+
+# 确保非 root 用户在 /workspace 下可写（避免在容器内操作时报权限错误）。
+RUN mkdir -p /workspace && chown -R node:node /workspace
+
 USER node
 
 # OpenClaw 官方 Docker 文档默认 gateway 端口为 18789。

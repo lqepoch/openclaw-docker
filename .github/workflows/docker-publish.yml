@@ -81,7 +81,10 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
+            # 发布 tag：同时推送完整版本、主版本、次版本（便于用户 pin 住兼容线）
             type=semver,pattern={{raw}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
             type=sha
             # 只有发布版本 tag（v*.*.*）时才更新 latest，让 latest 永远指向最新发布版
             type=raw,value=latest,enable={{is_tag}}

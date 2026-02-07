@@ -118,25 +118,58 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 推送镜像（上游版本标签 + latest）
+      - name: 推送镜像（上游版本标签 + latest + 主/次版本标签）
         env:
           UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
         run: |
           set -euo pipefail
 
-          dockerhub_tag="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${UPSTREAM_TAG}"
-          ghcr_tag="ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${UPSTREAM_TAG}"
+          dockerhub_repo="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
+          ghcr_repo="ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
 
-          dockerhub_latest="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
-          ghcr_latest="ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest"
+          dockerhub_tag="${dockerhub_repo}:${UPSTREAM_TAG}"
+          ghcr_tag="${ghcr_repo}:${UPSTREAM_TAG}"
+
+          # 解析 vX.Y.Z -> vX 以及 vX.Y（上游 tag 不符合预期格式时跳过）
+          major_tag=""
+          minor_tag=""
+          case "${UPSTREAM_TAG}" in
+            *.*.*)
+              major_tag="$(printf '%s' "${UPSTREAM_TAG}" | awk -F. '{print $1}')"
+              minor_tag="$(printf '%s' "${UPSTREAM_TAG}" | awk -F. '{print $1"."$2}')"
+              ;;
+            *)
+              echo "[warn] UPSTREAM_TAG 格式非 vX.Y.Z，跳过主/次版本标签：${UPSTREAM_TAG}" >&2
+              ;;
+          esac
+
+          dockerhub_major="${dockerhub_repo}:${major_tag}"
+          dockerhub_minor="${dockerhub_repo}:${minor_tag}"
+          ghcr_major="${ghcr_repo}:${major_tag}"
+          ghcr_minor="${ghcr_repo}:${minor_tag}"
+
+          dockerhub_latest="${dockerhub_repo}:latest"
+          ghcr_latest="${ghcr_repo}:latest"
 
           docker tag local/${{ env.IMAGE_NAME }}:amd64-test "${dockerhub_tag}"
           docker tag local/${{ env.IMAGE_NAME }}:amd64-test "${ghcr_tag}"
+          if [ -n "${major_tag}" ] && [ -n "${minor_tag}" ]; then
+            docker tag local/${{ env.IMAGE_NAME }}:amd64-test "${dockerhub_major}"
+            docker tag local/${{ env.IMAGE_NAME }}:amd64-test "${dockerhub_minor}"
+            docker tag local/${{ env.IMAGE_NAME }}:amd64-test "${ghcr_major}"
+            docker tag local/${{ env.IMAGE_NAME }}:amd64-test "${ghcr_minor}"
+          fi
           docker tag local/${{ env.IMAGE_NAME }}:amd64-test "${dockerhub_latest}"
           docker tag local/${{ env.IMAGE_NAME }}:amd64-test "${ghcr_latest}"
 
           docker push "${dockerhub_tag}"
           docker push "${ghcr_tag}"
+          if [ -n "${major_tag}" ] && [ -n "${minor_tag}" ]; then
+            docker push "${dockerhub_major}"
+            docker push "${dockerhub_minor}"
+            docker push "${ghcr_major}"
+            docker push "${ghcr_minor}"
+          fi
           docker push "${dockerhub_latest}"
           docker push "${ghcr_latest}"
 
@@ -180,13 +213,42 @@ jobs:
           dockerhub_repo="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
           ghcr_repo="ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
 
-          echo "同步 Docker Hub latest -> ${UPSTREAM_TAG}"
+          # 解析 vX.Y.Z -> vX 以及 vX.Y（上游 tag 不符合预期格式时跳过）
+          major_tag=""
+          minor_tag=""
+          case "${UPSTREAM_TAG}" in
+            *.*.*)
+              major_tag="$(printf '%s' "${UPSTREAM_TAG}" | awk -F. '{print $1}')"
+              minor_tag="$(printf '%s' "${UPSTREAM_TAG}" | awk -F. '{print $1"."$2}')"
+              ;;
+            *)
+              echo "[warn] UPSTREAM_TAG 格式非 vX.Y.Z，跳过主/次版本标签：${UPSTREAM_TAG}" >&2
+              ;;
+          esac
+
+          echo "同步 Docker Hub tags -> ${UPSTREAM_TAG}"
           docker pull "${dockerhub_repo}:${UPSTREAM_TAG}"
           docker tag "${dockerhub_repo}:${UPSTREAM_TAG}" "${dockerhub_repo}:latest"
+          if [ -n "${major_tag}" ] && [ -n "${minor_tag}" ]; then
+            docker tag "${dockerhub_repo}:${UPSTREAM_TAG}" "${dockerhub_repo}:${major_tag}"
+            docker tag "${dockerhub_repo}:${UPSTREAM_TAG}" "${dockerhub_repo}:${minor_tag}"
+          fi
           docker push "${dockerhub_repo}:latest"
+          if [ -n "${major_tag}" ] && [ -n "${minor_tag}" ]; then
+            docker push "${dockerhub_repo}:${major_tag}"
+            docker push "${dockerhub_repo}:${minor_tag}"
+          fi
 
-          echo "同步 GHCR latest -> ${UPSTREAM_TAG}"
+          echo "同步 GHCR tags -> ${UPSTREAM_TAG}"
           docker pull "${ghcr_repo}:${UPSTREAM_TAG}"
           docker tag "${ghcr_repo}:${UPSTREAM_TAG}" "${ghcr_repo}:latest"
+          if [ -n "${major_tag}" ] && [ -n "${minor_tag}" ]; then
+            docker tag "${ghcr_repo}:${UPSTREAM_TAG}" "${ghcr_repo}:${major_tag}"
+            docker tag "${ghcr_repo}:${UPSTREAM_TAG}" "${ghcr_repo}:${minor_tag}"
+          fi
           docker push "${ghcr_repo}:latest"
+          if [ -n "${major_tag}" ] && [ -n "${minor_tag}" ]; then
+            docker push "${ghcr_repo}:${major_tag}"
+            docker push "${ghcr_repo}:${minor_tag}"
+          fi
 
