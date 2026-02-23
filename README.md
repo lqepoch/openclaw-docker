@@ -38,6 +38,8 @@ docker run --rm -it \
 gh auth status -h github.com || printf '%s' "${GH_TOKEN}" | gh auth login --hostname github.com --with-token
 ```
 
+说明：镜像默认将 `GH_CONFIG_DIR` 设置为 `/home/node/.openclaw/.config/gh`，因此这一步的 `gh auth` 状态会随 `openclaw-data` volume 持久化。
+
 然后按顺序执行：
 
 ```bash
@@ -81,6 +83,7 @@ docker run -d --name openclaw \
 - 只要传入 `GH_TOKEN`/`GITHUB_TOKEN`，容器启动时会自动完成：
   - GitHub HTTPS 凭据配置（写入 `~/.git-credentials` 并启用 `credential.helper store`）。
   - GitHub 登录验证（`gh auth status`，必要时自动 `gh auth login --with-token`）。
+- 从本镜像版本起，`gh` 与 `git` 认证文件默认落在 `/home/node/.openclaw` 下，可随挂载 volume 持久化。
 - `OPENCLAW_GITHUB_AUTH_REQUIRED=true` 会在缺少 token 或验证失败时直接退出，避免后续初始化步骤失败才暴露问题。
 - `DISCORD_*_IDS` 支持逗号或空格分隔多个 ID。
 - 上述区间映射默认是 TCP；如需 UDP，请额外加 `-p 11001-20000:1001-10000/udp`。

@@ -10,6 +10,8 @@ ENV LANG=C.UTF-8 \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false \
     OPENCLAW_HOME=/home/node/.openclaw \
+    XDG_CONFIG_HOME=/home/node/.openclaw/.config \
+    GH_CONFIG_DIR=/home/node/.openclaw/.config/gh \
     OPENCLAW_PORT=18789
 
 ARG OPENCLAW_VERSION=latest
@@ -59,7 +61,7 @@ RUN git lfs install --system
 
 # 创建非 root 用户，提升运行安全性。
 RUN useradd -m -u 1000 -s /sbin/nologin node && \
-    mkdir -p "${OPENCLAW_HOME}" && \
+    mkdir -p "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}" && \
     chown -R node:node /home/node && \
     chmod 700 "${OPENCLAW_HOME}"
 

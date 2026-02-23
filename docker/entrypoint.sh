@@ -14,6 +14,10 @@ umask 027
 # GitHub 相关配置（默认 github.com；企业版可覆盖）。
 : "${GITHUB_HOST:=github.com}"
 
+# 将 gh 与 XDG 配置写入 OPENCLAW_HOME，便于 volume 持久化。
+: "${XDG_CONFIG_HOME:=${OPENCLAW_HOME}/.config}"
+: "${GH_CONFIG_DIR:=${XDG_CONFIG_HOME}/gh}"
+
 # 为了易用性，同时兼容单数/复数两种环境变量命名。
 if [ -n "${DISCORD_GUILD_ID:-}" ] && [ -z "${DISCORD_GUILD_IDS:-}" ]; then
   DISCORD_GUILD_IDS="${DISCORD_GUILD_ID}"
@@ -56,16 +60,22 @@ resolve_github_token() {
   fi
 }
 
+prepare_auth_dirs() {
+  mkdir -p "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}"
+  chmod 700 "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}"
+}
+
 configure_git_auth() {
   if [ -z "${GITHUB_AUTH_TOKEN:-}" ]; then
     return
   fi
 
-  GIT_CREDENTIALS_FILE="${HOME}/.git-credentials"
+  GIT_CREDENTIALS_FILE="${OPENCLAW_HOME}/.git-credentials"
+  GIT_CONFIG_GLOBAL_FILE="${OPENCLAW_HOME}/.gitconfig"
 
   # 仅使用标准 HTTPS 凭据存储，避免每次 git 操作都重复交互。
-  git config --global credential.helper "store --file=${GIT_CREDENTIALS_FILE}"
-  git config --global credential.useHttpPath true
+  GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL_FILE}" git config --global credential.helper "store --file=${GIT_CREDENTIALS_FILE}"
+  GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL_FILE}" git config --global credential.useHttpPath true
 
   umask 077
   printf 'https://x-access-token:%s@%s\n' "${GITHUB_AUTH_TOKEN}" "${GITHUB_HOST}" > "${GIT_CREDENTIALS_FILE}"
@@ -175,6 +185,7 @@ PY
 
 validate_port
 resolve_github_token
+prepare_auth_dirs
 configure_git_auth
 ensure_github_auth
 
