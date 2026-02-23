@@ -1,0 +1,59 @@
+name: CI (build + smoke test)
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: openclaw
+
+jobs:
+  docker:
+    name: Build + smoke test (linux/amd64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (load)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: local/${{ env.IMAGE_NAME }}:amd64-ci
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e OPENCLAW_AUTO_CONFIG=false \
+            local/${{ env.IMAGE_NAME }}:amd64-ci \
+            sh -lc "node --version && npm --version && python3 --version && pip3 --version && git --version && gh --version && aws --version && openclaw --version"
+
+      - name: Port validation
+        run: |
+          set -euo pipefail
+          if docker run --rm \
+            -e OPENCLAW_AUTO_CONFIG=false \
+            -e OPENCLAW_PORT=70000 \
+            local/${{ env.IMAGE_NAME }}:amd64-ci true; then
+            echo "Port validation failed: OPENCLAW_PORT=70000 should error" >&2
+            exit 1
+          fi

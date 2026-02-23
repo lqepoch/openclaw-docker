@@ -48,6 +48,8 @@ openclaw doctor --fix
 openclaw onboard --install-daemon
 ```
 
+如果你希望通过 `openclaw onboard` 配置 Discord，请确保镜像里包含 Discord channel（本仓库镜像默认包含）。另外还需要准备 Discord Bot Token，通常向向导输入或后续写入配置即可。
+
 执行 `openclaw onboard --install-daemon` 后通常不会自动退出交互界面。请按下面顺序结束初始化：
 
 1. `Ctrl+C` 中断当前前台流程。

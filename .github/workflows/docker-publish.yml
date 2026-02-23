@@ -3,8 +3,6 @@ name: 构建、测试并发布 Docker 镜像
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
     tags:
       - 'v*.*.*'
 
@@ -40,6 +38,8 @@ jobs:
           push: false
           load: true
           tags: local/${{ env.IMAGE_NAME }}:amd64-test
+          build-args: |
+            OPENCLAW_VERSION=${{ github.ref_name }}
 
       - name: 运行基础功能测试
         run: |
