@@ -20,21 +20,15 @@ docker volume create openclaw-data
 
 可选方式 B：不手动创建，后续 `docker run -v openclaw-data:/home/node/.openclaw ...` 会自动创建同名 volume。
 
-## 1.5（推荐）. 用 Compose 简化启动
-
-本仓库提供 `compose.yaml` + `.env.example`，推荐用 `docker compose` 管理环境变量与 volume，避免命令行越来越长。
-
-```bash
-cp .env.example .env
-# 编辑 .env 填入 GH_TOKEN / DISCORD_BOT_TOKEN 等
-```
-
 ## 2. 首次初始化（必须先做）
 
 先进入一个临时初始化容器：
 
 ```bash
-docker compose run --rm -it openclaw sh
+docker run --rm -it \
+  -v openclaw-data:/home/node/.openclaw \
+  -e GH_TOKEN="***" \
+  lqepoch/openclaw:latest sh
 ```
 
 在容器里先做 GitHub 登录验证（必须先做）：
@@ -58,7 +52,7 @@ openclaw onboard --install-daemon
 说明：
 - 本镜像启动时会自动设置 `gateway.mode=local`，并启用 discord 插件，避免 `openclaw onboard` 里出现 “discord plugin not available / plugin disabled”。
 - 若你打算用 Discord，推荐在启动容器时传入 `DISCORD_BOT_TOKEN`（或 `DISCORD_GUILD_IDS` 等 allowlist 变量），本镜像的 `docker/entrypoint.sh` 会在启动 gateway 前应用 allowlist 配置。
-- 不要使用 `--entrypoint sh` 进入容器：这会绕过镜像自带的 entrypoint，导致自动配置（含启用 discord 插件）不生效；请使用 `... lqepoch/openclaw:latest sh` 或 `docker compose run ... sh`。
+- 不要使用 `--entrypoint sh` 进入容器：这会绕过镜像自带的 entrypoint，导致自动配置（含启用 discord 插件）不生效；请使用 `... lqepoch/openclaw:latest sh`。
 - 若你在“容器已运行、gateway 已启动”之后才执行 `openclaw plugins enable discord`，需要重启 gateway（最简单是重启容器）才能生效（插件启用是写入配置，gateway 不会热加载）。
 
 执行 `openclaw onboard --install-daemon` 后通常不会自动退出交互界面。请按下面顺序结束初始化：
@@ -73,11 +67,24 @@ openclaw onboard --install-daemon
 
 ## 3. 启动服务
 
-默认只映射 gateway 端口 `18789`。如需额外端口（例如 browser/canvas/node host 相关），在 `compose.yaml` 里按需添加 `ports:` 映射即可。
+默认只映射 gateway 端口 `18789`。如需额外端口（例如 browser/canvas/node host 相关），按需添加额外的 `-p` 映射即可。
 
 ```bash
-docker compose up -d
+docker run -d --name openclaw \
+  --restart unless-stopped \
+  -v openclaw-data:/home/node/.openclaw \
+  -e GH_TOKEN="***" \
+  -e DISCORD_BOT_TOKEN="***" \
+  -e DISCORD_GUILD_IDS="***" \
+  -e DISCORD_USER_IDS="***" \
+  -p 127.0.0.1:18789:18789 \
+  lqepoch/openclaw:latest
 ```
+
+重要说明（“端口映射但访问没反应”的常见原因）：
+- 如果 gateway 在容器内只监听 `127.0.0.1`，宿主机的端口映射通常无法访问到它。
+- 本镜像默认将 `OPENCLAW_GATEWAY_BIND` 设为 `lan`（监听 `0.0.0.0`）。为了安全，建议把宿主机端口绑定到 `127.0.0.1:18789:18789`，需要对外暴露时再改成 `0.0.0.0:18789:18789` 并开启 gateway 认证。
+- 你可以通过日志判断：若看到 `listening on ws://127.0.0.1:18789`，说明当前运行的镜像/版本仍在 loopback 监听；请升级到最新镜像，或在启动时添加 `-e OPENCLAW_GATEWAY_BIND=lan` 后重启容器。
 
 说明：
 - 推荐使用 `GH_TOKEN`（GitHub CLI 的标准变量），也兼容 `GITHUB_TOKEN`。
@@ -92,21 +99,21 @@ docker compose up -d
 ## 4. 运行检查
 
 ```bash
-docker compose ps
-docker compose logs -f openclaw
+docker ps
+docker logs -f openclaw
 ```
 
-如果 `docker compose ps` 看不到容器，检查：
+如果 `docker ps` 看不到容器，检查：
 
 ```bash
-docker compose ps -a
-docker compose logs --tail=200 openclaw
+docker ps -a
+docker logs --tail=200 openclaw
 ```
 
 ## 5. 进入容器继续操作
 
 ```bash
-docker compose exec openclaw sh
+docker exec -it openclaw sh
 ```
 
 例如继续执行：

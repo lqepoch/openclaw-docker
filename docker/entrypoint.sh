@@ -8,6 +8,26 @@ umask 027
 # OpenClaw 文档中的默认 gateway 端口。
 : "${OPENCLAW_PORT:=18789}"
 
+# Compose/Docker 常见命名：允许用 OPENCLAW_GATEWAY_PORT 覆盖 OPENCLAW_PORT。
+if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
+  OPENCLAW_PORT="${OPENCLAW_GATEWAY_PORT}"
+fi
+
+# gateway 绑定地址策略：
+# - loopback：仅容器内可访问（通常会导致宿主机端口映射“没反应”）
+# - lan：监听 0.0.0.0，适合 Docker 端口映射（建议宿主机侧用 127.0.0.1:PORT:PORT 限制暴露面）
+# - auto/tailnet/custom：交由 OpenClaw 处理（见官方文档）
+: "${OPENCLAW_GATEWAY_BIND:=lan}"
+
+# 可选：为 gateway 显式配置认证（推荐在非 loopback 绑定时开启）。
+# - OPENCLAW_GATEWAY_TOKEN：token 认证（配合 OPENCLAW_GATEWAY_AUTH=token 或自动推断）
+# - OPENCLAW_GATEWAY_PASSWORD：password 认证（配合 OPENCLAW_GATEWAY_AUTH=password 或自动推断）
+# - OPENCLAW_GATEWAY_AUTH：显式指定 token/password（留空则自动推断）
+: "${OPENCLAW_GATEWAY_AUTH:=}"
+: "${OPENCLAW_GATEWAY_TOKEN:=}"
+: "${OPENCLAW_GATEWAY_PASSWORD:=}"
+: "${OPENCLAW_GATEWAY_EXTRA_ARGS:=}"
+
 # 如需在容器外完全自行管理 openclaw 配置，可设置为 false。
 : "${OPENCLAW_AUTO_CONFIG:=true}"
 
@@ -37,12 +57,21 @@ if [ -n "${DISCORD_CHANNEL_ID:-}" ] && [ -z "${DISCORD_CHANNEL_IDS:-}" ]; then
   DISCORD_CHANNEL_IDS="${DISCORD_CHANNEL_ID}"
 fi
 
+log() {
+  echo "[entrypoint] $*"
+}
+
+die() {
+  echo "[entrypoint] $*" >&2
+  exit 1
+}
+
 maybe_enable_discord_plugin() {
   # OpenClaw 默认将 Discord 插件设为 disabled。
   # 这里在 gateway 启动前，根据环境变量自动启用，避免出现
   # “已 enable plugin 但还要手动重启 gateway 才生效”的困惑。
   if [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${DISCORD_GUILD_IDS:-}" ] || [ -n "${DISCORD_USER_IDS:-}" ] || [ -n "${DISCORD_CHANNEL_IDS:-}" ]; then
-    echo "[entrypoint] 检测到 Discord 环境变量，正在启用 discord 插件..."
+    log "检测到 Discord 环境变量，正在启用 discord 插件..."
     openclaw plugins enable discord >/dev/null
   fi
 }
@@ -50,14 +79,12 @@ maybe_enable_discord_plugin() {
 validate_port() {
   case "${OPENCLAW_PORT}" in
     ''|*[!0-9]*)
-      echo "[entrypoint] OPENCLAW_PORT 非法（必须是数字）: ${OPENCLAW_PORT}" >&2
-      exit 1
+      die "OPENCLAW_PORT 非法（必须是数字）: ${OPENCLAW_PORT}"
       ;;
   esac
 
   if [ "${OPENCLAW_PORT}" -lt 1 ] || [ "${OPENCLAW_PORT}" -gt 65535 ]; then
-    echo "[entrypoint] OPENCLAW_PORT 超出范围（1-65535）: ${OPENCLAW_PORT}" >&2
-    exit 1
+    die "OPENCLAW_PORT 超出范围（1-65535）: ${OPENCLAW_PORT}"
   fi
 }
 
@@ -97,56 +124,53 @@ configure_git_auth() {
   GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL_FILE}" git config --global credential.useHttpPath true
 
   if [ -f "${GIT_CREDENTIALS_FILE}" ] && grep -Fqx "${GIT_CREDENTIALS_LINE}" "${GIT_CREDENTIALS_FILE}" 2>/dev/null; then
-    echo "[entrypoint] GitHub token 凭据已存在，跳过写入（${GITHUB_AUTH_TOKEN_SOURCE}）"
+    log "GitHub token 凭据已存在，跳过写入（${GITHUB_AUTH_TOKEN_SOURCE}）"
     return
   fi
 
   umask 077
   printf '%s\n' "${GIT_CREDENTIALS_LINE}" > "${GIT_CREDENTIALS_FILE}"
   chmod 600 "${GIT_CREDENTIALS_FILE}"
-  echo "[entrypoint] 已自动配置 GitHub token 凭据（${GITHUB_AUTH_TOKEN_SOURCE}）"
+  log "已自动配置 GitHub token 凭据（${GITHUB_AUTH_TOKEN_SOURCE}）"
 }
 
 ensure_github_auth() {
   if ! command -v gh >/dev/null 2>&1; then
     if [ "${OPENCLAW_GITHUB_AUTH_REQUIRED}" = "true" ]; then
-      echo "[entrypoint] 缺少 gh 命令，无法进行 GitHub 登录验证（OPENCLAW_GITHUB_AUTH_REQUIRED=true）" >&2
-      exit 1
+      die "缺少 gh 命令，无法进行 GitHub 登录验证（OPENCLAW_GITHUB_AUTH_REQUIRED=true）"
     fi
-    echo "[entrypoint] 未安装 gh，跳过 GitHub 登录验证"
+    log "未安装 gh，跳过 GitHub 登录验证"
     return
   fi
 
   if [ -z "${GITHUB_AUTH_TOKEN:-}" ]; then
     if [ "${OPENCLAW_GITHUB_AUTH_REQUIRED}" = "true" ]; then
-      echo "[entrypoint] 缺少 GH_TOKEN 或 GITHUB_TOKEN，无法进行 GitHub 登录验证（OPENCLAW_GITHUB_AUTH_REQUIRED=true）" >&2
-      exit 1
+      die "缺少 GH_TOKEN 或 GITHUB_TOKEN，无法进行 GitHub 登录验证（OPENCLAW_GITHUB_AUTH_REQUIRED=true）"
     fi
-    echo "[entrypoint] 未提供 GH_TOKEN/GITHUB_TOKEN，跳过 GitHub 登录验证"
+    log "未提供 GH_TOKEN/GITHUB_TOKEN，跳过 GitHub 登录验证"
     return
   fi
 
   if gh auth status -h "${GITHUB_HOST}" >/dev/null 2>&1; then
-    echo "[entrypoint] GitHub 登录验证通过（gh auth status -h ${GITHUB_HOST}）"
+    log "GitHub 登录验证通过（gh auth status -h ${GITHUB_HOST}）"
     return
   fi
 
   umask 077
   if printf '%s' "${GITHUB_AUTH_TOKEN}" | gh auth login --hostname "${GITHUB_HOST}" --with-token >/dev/null 2>&1; then
-    echo "[entrypoint] 已完成 GitHub 登录验证（${GITHUB_AUTH_TOKEN_SOURCE} -> gh auth login）"
+    log "已完成 GitHub 登录验证（${GITHUB_AUTH_TOKEN_SOURCE} -> gh auth login）"
     return
   fi
 
   if [ "${OPENCLAW_GITHUB_AUTH_REQUIRED}" = "true" ]; then
-    echo "[entrypoint] GitHub 登录验证失败（token 无效或权限不足？）" >&2
-    exit 1
+    die "GitHub 登录验证失败（token 无效或权限不足？）"
   fi
 
-  echo "[entrypoint] GitHub 登录验证失败，继续启动（可设置 OPENCLAW_GITHUB_AUTH_REQUIRED=true 强制失败退出）" >&2
+  log "GitHub 登录验证失败，继续启动（可设置 OPENCLAW_GITHUB_AUTH_REQUIRED=true 强制失败退出）"
 }
 
 apply_base_config() {
-  echo "[entrypoint] 正在应用 OpenClaw 基础配置..."
+  log "正在应用 OpenClaw 基础配置..."
   # 与官方文档一致：避免 gateway 因 mode 未设置而启动受限。
   openclaw config set gateway.mode local
 
@@ -161,7 +185,7 @@ apply_base_config() {
   openclaw plugins enable discord >/dev/null
 
   openclaw config set 'channels.discord.groupPolicy' 'allowlist'
-  openclaw config unset 'channels.discord.guilds' || true
+  openclaw config unset 'channels.discord.guilds' >/dev/null 2>&1 || true
 
   mkdir -p "${OPENCLAW_INIT_DIR}"
   : > "${OPENCLAW_BASE_CONFIG_SENTINEL}"
@@ -216,6 +240,30 @@ print(json.dumps(cfg, separators=(",", ":")))
 PY
 }
 
+resolve_gateway_auth_mode() {
+  # 若用户显式指定认证方式，则尊重；否则根据 token/password 自动推断。
+  if [ -n "${OPENCLAW_GATEWAY_AUTH}" ]; then
+    echo "${OPENCLAW_GATEWAY_AUTH}"
+    return
+  fi
+
+  if [ -n "${OPENCLAW_GATEWAY_TOKEN}" ] && [ -n "${OPENCLAW_GATEWAY_PASSWORD}" ]; then
+    die "同时设置了 OPENCLAW_GATEWAY_TOKEN 与 OPENCLAW_GATEWAY_PASSWORD，请仅选择一种"
+  fi
+
+  if [ -n "${OPENCLAW_GATEWAY_TOKEN}" ]; then
+    echo "token"
+    return
+  fi
+
+  if [ -n "${OPENCLAW_GATEWAY_PASSWORD}" ]; then
+    echo "password"
+    return
+  fi
+
+  echo ""
+}
+
 validate_port
 resolve_github_token
 prepare_auth_dirs
@@ -226,17 +274,17 @@ if [ "${OPENCLAW_AUTO_CONFIG}" = "true" ]; then
   if [ "${OPENCLAW_CONFIG_REAPPLY}" = "true" ] || [ ! -f "${OPENCLAW_BASE_CONFIG_SENTINEL}" ]; then
     apply_base_config
   else
-    echo "[entrypoint] 检测到已应用基础配置，跳过（可设置 OPENCLAW_CONFIG_REAPPLY=true 重新应用）"
+    log "检测到已应用基础配置，跳过（可设置 OPENCLAW_CONFIG_REAPPLY=true 重新应用）"
   fi
 
   maybe_enable_discord_plugin
 
   if [ -n "${DISCORD_GUILD_IDS:-}" ]; then
     JSON_CONFIG="$(build_discord_guilds_json)"
-    echo "[entrypoint] 正在应用 Discord guild allowlist 配置..."
+    log "正在应用 Discord guild allowlist 配置..."
     openclaw config set 'channels.discord.guilds' "${JSON_CONFIG}"
   else
-    echo "[entrypoint] DISCORD_GUILD_IDS 为空，跳过 channels.discord.guilds 配置"
+    log "DISCORD_GUILD_IDS 为空，跳过 channels.discord.guilds 配置"
   fi
 fi
 
@@ -245,4 +293,46 @@ if [ "$#" -gt 0 ]; then
   exec "$@"
 fi
 
-exec openclaw gateway --port "${OPENCLAW_PORT}"
+AUTH_MODE="$(resolve_gateway_auth_mode)"
+set -- openclaw gateway --port "${OPENCLAW_PORT}" --bind "${OPENCLAW_GATEWAY_BIND}"
+
+case "${AUTH_MODE}" in
+  token)
+    if [ -z "${OPENCLAW_GATEWAY_TOKEN}" ]; then
+      die "OPENCLAW_GATEWAY_AUTH=token 但 OPENCLAW_GATEWAY_TOKEN 为空"
+    fi
+    set -- "$@" --auth token --token "${OPENCLAW_GATEWAY_TOKEN}"
+    ;;
+  password)
+    if [ -z "${OPENCLAW_GATEWAY_PASSWORD}" ]; then
+      die "OPENCLAW_GATEWAY_AUTH=password 但 OPENCLAW_GATEWAY_PASSWORD 为空"
+    fi
+    set -- "$@" --auth password --password "${OPENCLAW_GATEWAY_PASSWORD}"
+    ;;
+  "")
+    ;;
+  *)
+    die "不支持的 OPENCLAW_GATEWAY_AUTH: ${AUTH_MODE}（仅支持 token/password 或留空）"
+    ;;
+esac
+
+if [ -n "${OPENCLAW_GATEWAY_EXTRA_ARGS}" ]; then
+  # OPENCLAW_GATEWAY_EXTRA_ARGS 用于补充 gateway CLI flags，按 shell 词法拆分。
+  # 示例：OPENCLAW_GATEWAY_EXTRA_ARGS="--log-level debug"
+  # shellcheck disable=SC2086
+  set -- "$@" ${OPENCLAW_GATEWAY_EXTRA_ARGS}
+fi
+
+if [ "${OPENCLAW_GATEWAY_BIND}" = "loopback" ]; then
+  log "注意：OPENCLAW_GATEWAY_BIND=loopback 时，gateway 仅容器内可访问；若你做了宿主机端口映射，外部访问可能会“没反应”"
+fi
+
+log "启动 openclaw gateway（port=${OPENCLAW_PORT}, bind=${OPENCLAW_GATEWAY_BIND}${AUTH_MODE:+, auth=${AUTH_MODE}}）"
+
+# 兼容性处理：不同 OpenClaw 版本的 gateway 参数可能不同。
+# 这里先尝试带 --bind/--auth 等参数启动；若失败则回退到最小参数集。
+"$@" || {
+  EXIT_CODE="$?"
+  log "gateway 启动失败（exit=${EXIT_CODE}），尝试以兼容模式回退启动：仅使用 --port"
+  exec openclaw gateway --port "${OPENCLAW_PORT}"
+}
