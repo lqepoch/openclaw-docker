@@ -2,6 +2,11 @@ name: CI (build + smoke test)
 
 on:
   workflow_dispatch:
+    inputs:
+      push_image:
+        description: "Also push image to registries (latest + sha-xxxxxxx)"
+        type: boolean
+        default: false
   pull_request:
   push:
     branches:
@@ -13,6 +18,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
 
 env:
   IMAGE_NAME: openclaw
@@ -38,6 +44,8 @@ jobs:
           push: false
           load: true
           tags: local/${{ env.IMAGE_NAME }}:amd64-ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Smoke test
         run: |
@@ -57,3 +65,46 @@ jobs:
             echo "Port validation failed: OPENCLAW_PORT=70000 should error" >&2
             exit 1
           fi
+
+      - name: Login Docker Hub
+        if: github.event_name == 'push' || github.event.inputs.push_image == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login GHCR
+        if: github.event_name == 'push' || github.event.inputs.push_image == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image (latest + sha)
+        if: github.event_name == 'push' || github.event.inputs.push_image == 'true'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
+            echo "Missing DOCKERHUB_USERNAME/DOCKERHUB_TOKEN secrets; cannot push to Docker Hub." >&2
+            exit 1
+          fi
+
+          sha_short="$(printf '%s' "${GITHUB_SHA}" | cut -c1-7)"
+          dockerhub_repo="docker.io/${DOCKERHUB_USERNAME}/${{ env.IMAGE_NAME }}"
+          ghcr_repo="ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+
+          for tag in latest "sha-${sha_short}"; do
+            echo "Pushing: ${dockerhub_repo}:${tag}"
+            docker tag local/${{ env.IMAGE_NAME }}:amd64-ci "${dockerhub_repo}:${tag}"
+            docker push "${dockerhub_repo}:${tag}"
+
+            echo "Pushing: ${ghcr_repo}:${tag}"
+            docker tag local/${{ env.IMAGE_NAME }}:amd64-ci "${ghcr_repo}:${tag}"
+            docker push "${ghcr_repo}:${tag}"
+          done
