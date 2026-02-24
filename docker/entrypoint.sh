@@ -37,6 +37,16 @@ if [ -n "${DISCORD_CHANNEL_ID:-}" ] && [ -z "${DISCORD_CHANNEL_IDS:-}" ]; then
   DISCORD_CHANNEL_IDS="${DISCORD_CHANNEL_ID}"
 fi
 
+maybe_enable_discord_plugin() {
+  # OpenClaw 默认将 Discord 插件设为 disabled。
+  # 这里在 gateway 启动前，根据环境变量自动启用，避免出现
+  # “已 enable plugin 但还要手动重启 gateway 才生效”的困惑。
+  if [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${DISCORD_GUILD_IDS:-}" ] || [ -n "${DISCORD_USER_IDS:-}" ] || [ -n "${DISCORD_CHANNEL_IDS:-}" ]; then
+    echo "[entrypoint] 检测到 Discord 环境变量，正在启用 discord 插件..."
+    openclaw plugins enable discord >/dev/null
+  fi
+}
+
 validate_port() {
   case "${OPENCLAW_PORT}" in
     ''|*[!0-9]*)
@@ -137,12 +147,18 @@ ensure_github_auth() {
 
 apply_base_config() {
   echo "[entrypoint] 正在应用 OpenClaw 基础配置..."
+  # 与官方文档一致：避免 gateway 因 mode 未设置而启动受限。
+  openclaw config set gateway.mode local
+
   openclaw config set 'agents.defaults.thinkingDefault' 'medium'
   openclaw config set 'messages.ackReaction' '👀'
   openclaw config set 'messages.ackReactionScope' 'group-all'
   openclaw config set 'messages.removeAckAfterReply' false
   openclaw config set 'commands.config' true
   openclaw config set 'channels.discord.configWrites' true
+
+  # 让 onboard/配置向导能直接看到 Discord channel 可用（避免出现 plugin disabled / not available）。
+  openclaw plugins enable discord >/dev/null
 
   openclaw config set 'channels.discord.groupPolicy' 'allowlist'
   openclaw config unset 'channels.discord.guilds' || true
@@ -212,6 +228,8 @@ if [ "${OPENCLAW_AUTO_CONFIG}" = "true" ]; then
   else
     echo "[entrypoint] 检测到已应用基础配置，跳过（可设置 OPENCLAW_CONFIG_REAPPLY=true 重新应用）"
   fi
+
+  maybe_enable_discord_plugin
 
   if [ -n "${DISCORD_GUILD_IDS:-}" ]; then
     JSON_CONFIG="$(build_discord_guilds_json)"
