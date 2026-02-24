@@ -50,8 +50,16 @@ jobs:
           marker_tag="${MARKER_TAG_PREFIX}${upstream_tag}"
           should_build="true"
 
+          # 规则：
+          # - marker tag 不存在：说明该上游版本从未构建过 -> 构建。
+          # - marker tag 存在但不指向当前 HEAD：说明本仓库内容变更过，需要重建/重新推送 -> 构建。
+          # - marker tag 存在且指向当前 HEAD：无需重复构建 -> 不构建。
           if git rev-parse -q --verify "refs/tags/${marker_tag}" >/dev/null; then
-            should_build="false"
+            tagged_commit="$(git rev-parse "${marker_tag}")"
+            head_commit="$(git rev-parse HEAD)"
+            if [ "${tagged_commit}" = "${head_commit}" ]; then
+              should_build="false"
+            fi
           fi
 
           echo "upstream_tag=${upstream_tag}" >> "$GITHUB_OUTPUT"
@@ -193,8 +201,9 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "${MARKER_TAG}"
-          git push origin "refs/tags/${MARKER_TAG}"
+          # marker tag 用于“是否需要重建”的标记，允许随本仓库变更而更新指向。
+          git tag -f "${MARKER_TAG}"
+          git push -f origin "refs/tags/${MARKER_TAG}"
 
   sync-latest:
     name: 同步 latest 标签（无需重新构建）
