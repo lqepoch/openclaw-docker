@@ -1,192 +1,104 @@
-# OpenClaw Docker 使用教程
+# OpenClaw Docker 教程（docker run）
 
-本教程只讲如何使用镜像部署与初始化 OpenClaw。
+目标：GitHub Actions 构建并推送镜像到 Docker Hub；服务器侧只需要 `docker pull` + `docker run`。
 
-## 0. 拉取镜像
+重要安全提示：不要把 `GH_TOKEN` / `DISCORD_BOT_TOKEN` / `CLOUDFLARE_API_TOKEN` 贴到任何聊天/Issue/日志里；一旦泄露请立刻撤销并重发。
+
+## 1) 拉取镜像
 
 ```bash
 docker pull lqepoch/openclaw:latest
 ```
 
-## 1. 准备持久化数据（推荐）
+## 2) 准备持久化 volume
 
-OpenClaw 配置目录在容器内是 `/home/node/.openclaw`。建议使用 named volume 持久化，避免删容器后配置丢失。
-
-可选方式 A：手动先创建 volume
+OpenClaw 配置目录在容器内：`/home/node/.openclaw`。推荐用 named volume：
 
 ```bash
-docker volume create openclaw-data
+docker volume create openclaw-data-openai-1
 ```
 
-可选方式 B：不手动创建，后续 `docker run -v openclaw-data:/home/node/.openclaw ...` 会自动创建同名 volume。
+## 3) `gateway.mode=local` 是什么？
 
-## 2. 首次初始化（必须先做）
+`gateway.mode=local` 是 OpenClaw 的网关运行模式设置：让 gateway 以 “local” 模式启动（通常用于本机/本容器可达的使用方式）。不设置时，gateway 可能无法正常启动或行为受限，所以本镜像会在启动时自动写入一次（重复写入无副作用）。
 
-先进入一个临时初始化容器：
+## 4) 首次初始化（交互式）
+
+不要用 `--entrypoint sh`（会绕过镜像的 entrypoint，自动配置不会执行）。
 
 ```bash
 docker run --rm -it \
-  -v openclaw-data:/home/node/.openclaw \
+  -v openclaw-data-openai-1:/home/node/.openclaw \
   -e GH_TOKEN="***" \
+  -e DISCORD_BOT_TOKEN="***" \
+  -e DISCORD_GUILD_IDS="1467171769424281802" \
+  -e DISCORD_USER_IDS="705990299771732028" \
   lqepoch/openclaw:latest sh
 ```
 
-在容器里先做 GitHub 登录验证（必须先做）：
+容器内执行：
 
 ```bash
 gh auth status -h github.com || printf '%s' "${GH_TOKEN}" | gh auth login --hostname github.com --with-token
-```
-
-说明：镜像默认将 `GH_CONFIG_DIR` 设置为 `/home/node/.openclaw/.config/gh`，因此这一步的 `gh auth` 状态会随 `openclaw-data` volume 持久化。
-
-然后按顺序执行：
-
-```bash
-openclaw config set gateway.mode local
 openclaw doctor --fix
 openclaw onboard --install-daemon
 ```
 
-如果你希望通过 `openclaw onboard` 配置 Discord，请确保镜像里包含 Discord channel（本仓库镜像默认包含）。
-
-说明：
-- 本镜像启动时会自动设置 `gateway.mode=local`，并启用 discord 插件，避免 `openclaw onboard` 里出现 “discord plugin not available / plugin disabled”。
-- 若你打算用 Discord，推荐在启动容器时传入 `DISCORD_BOT_TOKEN`（或 `DISCORD_GUILD_IDS` 等 allowlist 变量），本镜像的 `docker/entrypoint.sh` 会在启动 gateway 前应用 allowlist 配置。
-- 不要使用 `--entrypoint sh` 进入容器：这会绕过镜像自带的 entrypoint，导致自动配置（含启用 discord 插件）不生效；请使用 `... lqepoch/openclaw:latest sh`。
-- 若你在“容器已运行、gateway 已启动”之后才执行 `openclaw plugins enable discord`，需要重启 gateway（最简单是重启容器）才能生效（插件启用是写入配置，gateway 不会热加载）。
-
-执行 `openclaw onboard --install-daemon` 后通常不会自动退出交互界面。请按下面顺序结束初始化：
-
-1. `Ctrl+C` 中断当前前台流程。
-2. 执行 `exit` 退出容器。
-
-说明：
-- `gateway.mode local` 不设置时，gateway 可能会被拦截启动；本镜像会在启动时自动设置一次，手动执行也不会有副作用。
-- `doctor --fix` 用于自动修复建议项。
-- `openclaw onboard --install-daemon` 按你的要求保留在初始化流程中。
-
-## 3. 启动服务
-
-默认只映射 gateway 端口 `18789`。如需额外端口（例如 browser/canvas/node host 相关），按需添加额外的 `-p` 映射即可。
+退出容器：
 
 ```bash
-docker run -d --name openclaw \
+exit
+```
+
+## 5) 常驻运行（daemon）
+
+如果你要从宿主机访问 `18789`，建议显式设置 `OPENCLAW_GATEWAY_BIND=lan`（让容器内监听 `0.0.0.0`）。
+
+```bash
+docker run -d --name openclaw-data-openai-1 \
   --restart unless-stopped \
-  -v openclaw-data:/home/node/.openclaw \
+  -v openclaw-data-openai-1:/home/node/.openclaw \
   -e GH_TOKEN="***" \
   -e DISCORD_BOT_TOKEN="***" \
-  -e DISCORD_GUILD_IDS="***" \
-  -e DISCORD_USER_IDS="***" \
-  -p 127.0.0.1:18789:18789 \
+  -e DISCORD_GUILD_IDS="1467171769424281802" \
+  -e DISCORD_USER_IDS="705990299771732028" \
+  -e OPENCLAW_GATEWAY_BIND=lan \
+  -p 18789:18789 \
   lqepoch/openclaw:latest
 ```
 
-重要说明（“端口映射但访问没反应”的常见原因）：
-- 如果 gateway 在容器内只监听 `127.0.0.1`，宿主机的端口映射通常无法访问到它。
-- 本镜像默认将 `OPENCLAW_GATEWAY_BIND` 设为 `lan`（监听 `0.0.0.0`）。为了安全，建议把宿主机端口绑定到 `127.0.0.1:18789:18789`，需要对外暴露时再改成 `0.0.0.0:18789:18789` 并开启 gateway 认证。
-- 你可以通过日志判断：若看到 `listening on ws://127.0.0.1:18789`，说明当前运行的镜像/版本仍在 loopback 监听；请升级到最新镜像，或在启动时添加 `-e OPENCLAW_GATEWAY_BIND=lan` 后重启容器。
+## 6) 本镜像启动时会自动写入哪些配置？
 
-说明：
-- 推荐使用 `GH_TOKEN`（GitHub CLI 的标准变量），也兼容 `GITHUB_TOKEN`。
-- 只要传入 `GH_TOKEN`/`GITHUB_TOKEN`，容器启动时会自动完成：
-  - GitHub HTTPS 凭据配置（写入 `~/.git-credentials` 并启用 `credential.helper store`）。
-  - GitHub 登录验证（`gh auth status`，必要时自动 `gh auth login --with-token`）。
-- 从本镜像版本起，`gh` 与 `git` 认证文件默认落在 `/home/node/.openclaw` 下，可随挂载 volume 持久化。
-- `OPENCLAW_GITHUB_AUTH_REQUIRED=true` 会在缺少 token 或验证失败时直接退出，避免后续初始化步骤失败才暴露问题。
-- `DISCORD_*_IDS` 支持逗号或空格分隔多个 ID。
-- 如需映射端口区间或 UDP，在 `compose.yaml` 里添加对应的 `ports:`（例如 `"11001-20000:1001-10000/udp"`）。
+`docker/entrypoint.sh` 会按以下顺序写入（尽量贴近你给的清单）：
 
-## 4. 运行检查
+1. `openclaw config set gateway.mode local`
+2. 检测到 Discord 环境变量时启用插件：`openclaw plugins enable discord`
+3. Discord allowlist（单 guild + 单 user）：
+   - `openclaw config set 'channels.discord.groupPolicy' 'allowlist'`
+   - `openclaw config unset 'channels.discord.guilds'`
+   - `openclaw config set --json 'channels.discord.guilds' "$JSON_CONFIG"`（若不支持 `--json` 会自动回退到普通 `config set`）
+4. 其余偏好项：
+   - `agents.defaults.thinkingDefault=medium`
+   - `messages.ackReaction=👀`
+   - `messages.ackReactionScope=group-all`
+   - `messages.removeAckAfterReply=false`
+   - `commands.config=true`
+   - `channels.discord.configWrites=true`
 
-```bash
-docker ps
-docker logs -f openclaw
-```
+## 7) 检查与排障
 
-如果 `docker ps` 看不到容器，检查：
+查看日志：
 
 ```bash
-docker ps -a
-docker logs --tail=200 openclaw
+docker logs -f openclaw-data-openai-1
 ```
 
-## 5. 进入容器继续操作
+检查 Discord guilds 配置：
 
 ```bash
-docker exec -it openclaw sh
+docker exec -it openclaw-data-openai-1 sh -lc "openclaw config get --json 'channels.discord.guilds'"
 ```
 
-例如继续执行：
-
-```bash
-openclaw onboard --install-daemon
-```
-
-## 6. 常用运维命令
-
-停止/启动：
-
-```bash
-docker stop openclaw
-docker start openclaw
-```
-
-重启：
-
-```bash
-docker restart openclaw
-```
-
-删除容器（不删除配置卷）：
-
-```bash
-docker rm -f openclaw
-```
-
-升级镜像：
-
-```bash
-docker pull lqepoch/openclaw:latest
-docker rm -f openclaw
-# 然后按第 3 节命令重新启动
-```
-
-## 7. 自动更新镜像（北京时间每天 06:00）
-
-推荐使用 Watchtower 定时检查并自动重建容器。
-
-先启动 Watchtower（只监控一个容器 `openclaw`）：
-
-```bash
-docker run -d \
-  --name watchtower \
-  --restart unless-stopped \
-  -e TZ=Asia/Shanghai \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  containrrr/watchtower \
-  --schedule "0 0 6 * * *" \
-  --cleanup \
-  --rolling-restart \
-  openclaw
-```
-
-如果你要同时监控多个容器（例如 `openclaw-data-openai-1` 和 `openclaw-data-google`），把容器名都放到命令末尾：
-
-```bash
-docker run -d \
-  --name watchtower \
-  --restart unless-stopped \
-  -e TZ=Asia/Shanghai \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  containrrr/watchtower \
-  --schedule "0 0 6 * * *" \
-  --cleanup \
-  --rolling-restart \
-  openclaw-data-openai-1 openclaw-data-google
-```
-
-查看自动更新日志：
-
-```bash
-docker logs -f watchtower
-```
+如果你修改了配置需要生效：
+- 最稳妥方式：`docker restart openclaw-data-openai-1`
+- 或进入容器尝试：`openclaw gateway restart`（若你的 OpenClaw 版本支持该命令）
