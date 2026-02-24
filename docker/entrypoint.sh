@@ -2,11 +2,17 @@
 set -eu
 umask 027
 
+# OpenClaw 配置目录（默认与 Dockerfile 一致；也允许运行时覆盖）。
+: "${OPENCLAW_HOME:=/home/node/.openclaw}"
+
 # OpenClaw 文档中的默认 gateway 端口。
 : "${OPENCLAW_PORT:=18789}"
 
 # 如需在容器外完全自行管理 openclaw 配置，可设置为 false。
 : "${OPENCLAW_AUTO_CONFIG:=true}"
+
+# 是否重复应用基础配置（默认仅首次对 volume 应用一次）。
+: "${OPENCLAW_CONFIG_REAPPLY:=false}"
 
 # 是否强制要求 GitHub 登录验证（缺少 token 或验证失败会直接退出）。
 : "${OPENCLAW_GITHUB_AUTH_REQUIRED:=false}"
@@ -17,6 +23,8 @@ umask 027
 # 将 gh 与 XDG 配置写入 OPENCLAW_HOME，便于 volume 持久化。
 : "${XDG_CONFIG_HOME:=${OPENCLAW_HOME}/.config}"
 : "${GH_CONFIG_DIR:=${XDG_CONFIG_HOME}/gh}"
+: "${OPENCLAW_INIT_DIR:=${OPENCLAW_HOME}/.init}"
+: "${OPENCLAW_BASE_CONFIG_SENTINEL:=${OPENCLAW_INIT_DIR}/base-config.applied}"
 
 # 为了易用性，同时兼容单数/复数两种环境变量命名。
 if [ -n "${DISCORD_GUILD_ID:-}" ] && [ -z "${DISCORD_GUILD_IDS:-}" ]; then
@@ -61,8 +69,8 @@ resolve_github_token() {
 }
 
 prepare_auth_dirs() {
-  mkdir -p "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}"
-  chmod 700 "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}"
+  mkdir -p "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}" "${OPENCLAW_INIT_DIR}"
+  chmod 700 "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}" "${OPENCLAW_INIT_DIR}"
 }
 
 configure_git_auth() {
@@ -72,13 +80,19 @@ configure_git_auth() {
 
   GIT_CREDENTIALS_FILE="${OPENCLAW_HOME}/.git-credentials"
   GIT_CONFIG_GLOBAL_FILE="${OPENCLAW_HOME}/.gitconfig"
+  GIT_CREDENTIALS_LINE="https://x-access-token:${GITHUB_AUTH_TOKEN}@${GITHUB_HOST}"
 
   # 仅使用标准 HTTPS 凭据存储，避免每次 git 操作都重复交互。
   GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL_FILE}" git config --global credential.helper "store --file=${GIT_CREDENTIALS_FILE}"
   GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL_FILE}" git config --global credential.useHttpPath true
 
+  if [ -f "${GIT_CREDENTIALS_FILE}" ] && grep -Fqx "${GIT_CREDENTIALS_LINE}" "${GIT_CREDENTIALS_FILE}" 2>/dev/null; then
+    echo "[entrypoint] GitHub token 凭据已存在，跳过写入（${GITHUB_AUTH_TOKEN_SOURCE}）"
+    return
+  fi
+
   umask 077
-  printf 'https://x-access-token:%s@%s\n' "${GITHUB_AUTH_TOKEN}" "${GITHUB_HOST}" > "${GIT_CREDENTIALS_FILE}"
+  printf '%s\n' "${GIT_CREDENTIALS_LINE}" > "${GIT_CREDENTIALS_FILE}"
   chmod 600 "${GIT_CREDENTIALS_FILE}"
   echo "[entrypoint] 已自动配置 GitHub token 凭据（${GITHUB_AUTH_TOKEN_SOURCE}）"
 }
@@ -132,6 +146,9 @@ apply_base_config() {
 
   openclaw config set 'channels.discord.groupPolicy' 'allowlist'
   openclaw config unset 'channels.discord.guilds' || true
+
+  mkdir -p "${OPENCLAW_INIT_DIR}"
+  : > "${OPENCLAW_BASE_CONFIG_SENTINEL}"
 }
 
 build_discord_guilds_json() {
@@ -190,7 +207,11 @@ configure_git_auth
 ensure_github_auth
 
 if [ "${OPENCLAW_AUTO_CONFIG}" = "true" ]; then
-  apply_base_config
+  if [ "${OPENCLAW_CONFIG_REAPPLY}" = "true" ] || [ ! -f "${OPENCLAW_BASE_CONFIG_SENTINEL}" ]; then
+    apply_base_config
+  else
+    echo "[entrypoint] 检测到已应用基础配置，跳过（可设置 OPENCLAW_CONFIG_REAPPLY=true 重新应用）"
+  fi
 
   if [ -n "${DISCORD_GUILD_IDS:-}" ]; then
     JSON_CONFIG="$(build_discord_guilds_json)"

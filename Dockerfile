@@ -16,11 +16,14 @@ ENV LANG=C.UTF-8 \
 
 ARG OPENCLAW_VERSION=latest
 
-# 使用 dnf 安装运行时与工具链（包管理优先）：
+# 使用 dnf 安装运行时与工具链（包管理优先），并安装 GitHub CLI（gh）。
 # - nodejs24：openclaw CLI 依赖。
 # - python3.13/pip：Python 运行时与 boto3 依赖。
 # - git/git-lfs/awscli-2：CI/CD 与仓库操作工具。
-RUN dnf install -y --setopt=install_weak_deps=False \
+# - gh：GitHub CLI。
+# 说明：gh 按 GitHub 官方 RPM(DNF4) 指南安装：
+# https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+RUN dnf install -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs \
       nodejs24 \
       nodejs24-npm \
       python3.13 \
@@ -29,16 +32,10 @@ RUN dnf install -y --setopt=install_weak_deps=False \
       git-lfs \
       awscli-2 \
       ca-certificates \
-      shadow-utils && \
-    dnf clean all && \
-    rm -rf /var/cache/dnf
-
-# 安装 GitHub CLI（gh）
-# 按 GitHub 官方 RPM(DNF4) 指南安装：
-# https://github.com/cli/cli/blob/trunk/docs/install_linux.md
-RUN dnf install -y --setopt=install_weak_deps=False 'dnf-command(config-manager)' && \
+      shadow-utils \
+      'dnf-command(config-manager)' && \
     dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo && \
-    dnf install -y --setopt=install_weak_deps=False gh --repo gh-cli && \
+    dnf install -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs gh --repo gh-cli && \
     dnf clean all && \
     rm -rf /var/cache/dnf
 
