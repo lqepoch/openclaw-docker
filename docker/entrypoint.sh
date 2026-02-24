@@ -2,7 +2,6 @@
 set -eu
 
 : "${OPENCLAW_HOME:=/home/node/.openclaw}"
-: "${OPENCLAW_PORT:=18789}"
 : "${OPENCLAW_AUTO_CONFIG:=true}"
 : "${GITHUB_HOST:=github.com}"
 
@@ -12,6 +11,8 @@ set -eu
 
 # Optional: pass through to `openclaw gateway --bind ...` (e.g. lan/loopback/auto)
 : "${OPENCLAW_GATEWAY_BIND:=}"
+
+OPENCLAW_PORT="18789"
 
 mkdir -p "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}"
 chmod 700 "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}"

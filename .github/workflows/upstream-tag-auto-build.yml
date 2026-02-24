@@ -106,14 +106,7 @@ jobs:
             sh -lc "node --version && npm --version && python3 --version && pip3 --version && git --version && gh --version && aws --version && openclaw --version"
 
       - name: 运行端口校验测试
-        run: |
-          if docker run --rm \
-            -e OPENCLAW_AUTO_CONFIG=false \
-            -e OPENCLAW_PORT=70000 \
-            local/${{ env.IMAGE_NAME }}:amd64-test true; then
-            echo "端口校验测试失败：OPENCLAW_PORT=70000 应该报错" >&2
-            exit 1
-          fi
+        run: echo "Skipped (port fixed to 18789)"
 
       - name: 解析上游 tag（vX.Y.Z -> vX / vX.Y）
         id: semver

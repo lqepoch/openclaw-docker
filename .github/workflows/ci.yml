@@ -55,15 +55,7 @@ jobs:
             sh -lc "node --version && npm --version && python3 --version && pip3 --version && git --version && gh --version && aws --version && openclaw --version"
 
       - name: Port validation
-        run: |
-          set -euo pipefail
-          if docker run --rm \
-            -e OPENCLAW_AUTO_CONFIG=false \
-            -e OPENCLAW_PORT=70000 \
-            local/${{ env.IMAGE_NAME }}:amd64-ci true; then
-            echo "Port validation failed: OPENCLAW_PORT=70000 should error" >&2
-            exit 1
-          fi
+        run: echo "Skipped (port fixed to 18789)"
 
       - name: Login Docker Hub
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.event.inputs.push_image == 'true')
