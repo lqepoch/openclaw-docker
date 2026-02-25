@@ -31,8 +31,8 @@ docker run --rm -it \
   -v openclaw-data-openai-1:/home/node/.openclaw \
   -e GH_TOKEN="***" \
   -e DISCORD_BOT_TOKEN="***" \
-  -e DISCORD_GUILD_IDS="1467171769424281802" \
-  -e DISCORD_USER_IDS="705990299771732028" \
+  -e DISCORD_GUILD_IDS="***" \
+  -e DISCORD_USER_IDS="***" \
   lqepoch/openclaw:latest sh
 ```
 
@@ -60,14 +60,45 @@ docker run -d --name openclaw-data-openai-1 \
   -v openclaw-data-openai-1:/home/node/.openclaw \
   -e GH_TOKEN="***" \
   -e DISCORD_BOT_TOKEN="***" \
-  -e DISCORD_GUILD_IDS="1467171769424281802" \
-  -e DISCORD_USER_IDS="705990299771732028" \
+  -e DISCORD_GUILD_IDS="***" \
+  -e DISCORD_USER_IDS="***" \
   -e OPENCLAW_GATEWAY_BIND=lan \
   -p 18789:18789 \
   lqepoch/openclaw:latest
 ```
 
-## 6) 本镜像启动时会自动写入哪些配置？
+## 6) 自动更新（默认开启）
+
+镜像默认行为：
+- 每次启动 gateway 前都会尝试执行一次 `openclaw update`（仅在该命令支持非交互确认参数时才会执行；否则会跳过，避免容器卡住）。
+- 容器运行期间，会在北京时间每天 `05:00` 再尝试执行一次 `openclaw update`（无更新则无变化）。
+
+```bash
+# 如需关闭自动更新：
+-e OPENCLAW_AUTO_UPDATE=false
+```
+
+说明：
+- 如需“更新失败就不启动”，加：`-e OPENCLAW_AUTO_UPDATE_REQUIRED=true`
+- 如需关闭“每天 05:00 自动更新”，加：`-e OPENCLAW_DAILY_UPDATE=false`
+
+## 7)（可选）安装 ClawHub skills
+
+镜像默认会在首次启动时自动安装 GitHub skill：`steipete/github`（只安装一次；后续重启不重复安装）。
+
+如果你还想额外安装多个 skills，用 `OPENCLAW_CLAWHUB_EXTRA_SKILLS`（空格/逗号分隔，支持 URL 或 `owner/slug`）：
+
+```bash
+-e OPENCLAW_CLAWHUB_EXTRA_SKILLS="owner2/skill2,https://clawhub.ai/owner3/skill3"
+```
+
+如需关闭自动安装：
+
+```bash
+-e OPENCLAW_CLAWHUB_AUTO_INSTALL=false
+```
+
+## 8) 本镜像启动时会自动写入哪些配置？
 
 `docker/entrypoint.sh` 会按以下顺序写入（尽量贴近你给的清单）：
 
@@ -85,7 +116,7 @@ docker run -d --name openclaw-data-openai-1 \
    - `commands.config=true`
    - `channels.discord.configWrites=true`
 
-## 7) 检查与排障
+## 9) 检查与排障
 
 查看日志：
 

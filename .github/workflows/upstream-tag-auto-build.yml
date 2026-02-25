@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     # GitHub Actions 的 cron 按 UTC 解释：每 2 小时一次（00:00 UTC 开始）。
-    - cron: '0 */2 * * *'
+    - cron: '0 */6 * * *'
 
 concurrency:
   group: upstream-tag-auto-build

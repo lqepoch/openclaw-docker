@@ -44,6 +44,7 @@ RUN if ! command -v node >/dev/null 2>&1 && command -v node-24 >/dev/null 2>&1; 
     if ! command -v npm >/dev/null 2>&1 && command -v npm-24 >/dev/null 2>&1; then ln -sf /usr/bin/npm-24 /usr/local/bin/npm; fi && \
     node --version && npm --version && \
     npm install -g --no-audit "openclaw@${OPENCLAW_VERSION}" && \
+    npm install -g --no-audit clawhub && \
     npm cache clean --force && \
     python3.13 -m pip install --no-cache-dir --upgrade pip boto3
 
