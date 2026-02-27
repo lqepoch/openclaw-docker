@@ -133,3 +133,19 @@ docker exec -it openclaw-data-openai-1 sh -lc "openclaw config get --json 'chann
 如果你修改了配置需要生效：
 - 最稳妥方式：`docker restart openclaw-data-openai-1`
 - 或进入容器尝试：`openclaw gateway restart`（若你的 OpenClaw 版本支持该命令）
+
+## 10) Gemini CLI（已内置）
+
+本镜像在构建时已预装 `@google/gemini-cli`，容器内可直接使用 `gemini` 命令，不需要再手动执行 `brew install gemini-cli`。
+
+验证：
+
+```bash
+docker exec -it openclaw-data-openai-1 sh -lc "gemini --version"
+```
+
+首次鉴权可在容器内执行（按提示完成）：
+
+```bash
+docker exec -it openclaw-data-openai-1 sh -lc "gemini auth login"
+```
