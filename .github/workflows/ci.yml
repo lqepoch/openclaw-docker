@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       push_image:
-        description: "Also push dev tags to Docker Hub (edge + sha-xxxxxxx)"
+        description: "Also push image tags to Docker Hub (commit-xxxxxxx + upstream + latest)"
         type: boolean
         default: true
   pull_request:
@@ -21,6 +21,7 @@ permissions:
 
 env:
   IMAGE_NAME: openclaw
+  UPSTREAM_REPO: openclaw/openclaw
 
 jobs:
   docker:
@@ -34,6 +35,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Detect latest upstream OpenClaw tag
+        id: upstream
+        run: |
+          set -euo pipefail
+          upstream_tag="$(git ls-remote --tags --refs "https://github.com/${{ env.UPSTREAM_REPO }}.git" "v*" | awk -F/ '{print $3}' | sort -V | tail -n1)"
+          if [ -z "${upstream_tag}" ]; then
+            echo "Failed to resolve upstream OpenClaw tag" >&2
+            exit 1
+          fi
+          echo "upstream_tag=${upstream_tag}" >> "$GITHUB_OUTPUT"
+          echo "Using upstream tag: ${upstream_tag}"
+
       - name: Build image (load)
         uses: docker/build-push-action@v6
         with:
@@ -45,6 +58,8 @@ jobs:
           tags: local/${{ env.IMAGE_NAME }}:amd64-ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            OPENCLAW_VERSION=${{ steps.upstream.outputs.upstream_tag }}
 
       - name: Smoke test
         run: |
@@ -65,16 +80,18 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Push image (edge + sha)
+      - name: Push image (commit + upstream + latest)
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.event.inputs.push_image == 'true')
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.upstream_tag }}
         run: |
           set -euo pipefail
           sha_short="$(printf '%s' "${GITHUB_SHA}" | cut -c1-7)"
           repo="docker.io/${DOCKERHUB_USERNAME}/${{ env.IMAGE_NAME }}"
+          commit_tag="commit-${sha_short}"
 
-          for tag in edge "sha-${sha_short}"; do
+          for tag in "${commit_tag}" "${UPSTREAM_TAG}" latest; do
             docker tag local/${{ env.IMAGE_NAME }}:amd64-ci "${repo}:${tag}"
             docker push "${repo}:${tag}"
           done
