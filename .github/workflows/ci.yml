@@ -32,27 +32,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node 24 (for npm view)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Detect latest upstream OpenClaw tag
+      - name: Detect latest OpenClaw npm version
         id: upstream
         run: |
           set -euo pipefail
-          upstream_tag="$(git ls-remote --tags --refs "https://github.com/${{ env.UPSTREAM_REPO }}.git" "v*" | awk -F/ '{print $3}' | sort -V | tail -n1)"
-          if [ -z "${upstream_tag}" ]; then
-            echo "Failed to resolve upstream OpenClaw tag" >&2
-            exit 1
-          fi
-          npm_version="${upstream_tag#v}"
+          npm_version="$(npm view openclaw@latest version)"
           if [ -z "${npm_version}" ]; then
-            echo "Failed to derive npm version from upstream tag: ${upstream_tag}" >&2
+            echo "Failed to resolve latest npm version for openclaw." >&2
             exit 1
           fi
+          upstream_tag="v${npm_version}"
           echo "upstream_tag=${upstream_tag}" >> "$GITHUB_OUTPUT"
           echo "npm_version=${npm_version}" >> "$GITHUB_OUTPUT"
-          echo "Using upstream tag: ${upstream_tag}"
-          echo "Using npm version: ${npm_version}"
+          echo "Using npm latest version: ${npm_version}"
 
       - name: Build image (load)
         uses: docker/build-push-action@v6
@@ -66,7 +66,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            OPENCLAW_VERSION=${{ steps.upstream.outputs.npm_version }}
+            OPENCLAW_VERSION=latest
 
       - name: Smoke test
         run: |
