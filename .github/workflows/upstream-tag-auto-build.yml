@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       upstream_tag: ${{ steps.detect.outputs.upstream_tag }}
+      npm_version: ${{ steps.detect.outputs.npm_version }}
       marker_tag: ${{ steps.detect.outputs.marker_tag }}
       should_build: ${{ steps.detect.outputs.should_build }}
     steps:
@@ -46,6 +47,11 @@ jobs:
             echo "未获取到上游 tag，终止本次流程。" >&2
             exit 1
           fi
+          npm_version="${upstream_tag#v}"
+          if [ -z "${npm_version}" ]; then
+            echo "无法从上游 tag 解析 npm 版本: ${upstream_tag}" >&2
+            exit 1
+          fi
 
           marker_tag="${MARKER_TAG_PREFIX}${upstream_tag}"
           should_build="true"
@@ -63,10 +69,12 @@ jobs:
           fi
 
           echo "upstream_tag=${upstream_tag}" >> "$GITHUB_OUTPUT"
+          echo "npm_version=${npm_version}" >> "$GITHUB_OUTPUT"
           echo "marker_tag=${marker_tag}" >> "$GITHUB_OUTPUT"
           echo "should_build=${should_build}" >> "$GITHUB_OUTPUT"
 
           echo "最新上游 tag: ${upstream_tag}"
+          echo "用于 npm 安装的版本: ${npm_version}"
           echo "标记 tag: ${marker_tag}"
           echo "是否构建: ${should_build}"
 
@@ -96,7 +104,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            OPENCLAW_VERSION=${{ needs.detect.outputs.upstream_tag }}
+            OPENCLAW_VERSION=${{ needs.detect.outputs.npm_version }}
 
       - name: 运行基础功能测试
         run: |

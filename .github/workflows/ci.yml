@@ -44,8 +44,15 @@ jobs:
             echo "Failed to resolve upstream OpenClaw tag" >&2
             exit 1
           fi
+          npm_version="${upstream_tag#v}"
+          if [ -z "${npm_version}" ]; then
+            echo "Failed to derive npm version from upstream tag: ${upstream_tag}" >&2
+            exit 1
+          fi
           echo "upstream_tag=${upstream_tag}" >> "$GITHUB_OUTPUT"
+          echo "npm_version=${npm_version}" >> "$GITHUB_OUTPUT"
           echo "Using upstream tag: ${upstream_tag}"
+          echo "Using npm version: ${npm_version}"
 
       - name: Build image (load)
         uses: docker/build-push-action@v6
@@ -59,7 +66,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            OPENCLAW_VERSION=${{ steps.upstream.outputs.upstream_tag }}
+            OPENCLAW_VERSION=${{ steps.upstream.outputs.npm_version }}
 
       - name: Smoke test
         run: |
