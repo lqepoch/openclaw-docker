@@ -78,9 +78,14 @@ RUN node --version && npm --version && \
 RUN git lfs install --system
 
 # 创建非 root 用户，提升运行安全性。
-RUN useradd -m -u 1000 -s /usr/sbin/nologin node && \
-    mkdir -p "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}" && \
-    chown -R node:node /home/node && \
+RUN set -eux; \
+    if ! id -u node >/dev/null 2>&1; then \
+      uid=1000; \
+      while getent passwd "${uid}" >/dev/null; do uid="$((uid+1))"; done; \
+      useradd -m -u "${uid}" -s /usr/sbin/nologin node; \
+    fi; \
+    mkdir -p "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}"; \
+    chown -R node:node /home/node; \
     chmod 700 "${OPENCLAW_HOME}"
 
 # 启动脚本会自动应用 OpenClaw 默认配置与可选 Discord allowlist JSON，
