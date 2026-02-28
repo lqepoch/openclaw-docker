@@ -1,14 +1,16 @@
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+FROM ubuntu:24.04
 
 # 容器级默认变量：
 # - OPENCLAW_HOME：非 root 用户的 OpenClaw 运行配置目录。
 # - OPENCLAW_PORT：gateway 监听端口，可通过 -e OPENCLAW_PORT=xxxx 在运行时覆盖。
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
+    DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false \
+    PATH=/opt/venv/bin:$PATH \
     OPENCLAW_HOME=/home/node/.openclaw \
     XDG_CONFIG_HOME=/home/node/.openclaw/.config \
     GH_CONFIG_DIR=/home/node/.openclaw/.config/gh \
@@ -16,50 +18,67 @@ ENV LANG=C.UTF-8 \
 
 ARG OPENCLAW_VERSION=latest
 
-# 使用 dnf 安装运行时与工具链（包管理优先），并安装 GitHub CLI（gh）。
-# - nodejs24：openclaw CLI 依赖。
-# - python3.13/pip：Python 运行时与 boto3 依赖。
-# - git/git-lfs/awscli-2：CI/CD 与仓库操作工具。
-# - gh：GitHub CLI。
-# 说明：gh 按 GitHub 官方 RPM(DNF4) 指南安装：
-# https://github.com/cli/cli/blob/trunk/docs/install_linux.md
-RUN dnf install -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs \
-      nodejs24 \
-      nodejs24-npm \
-      python3.13 \
-      python3.13-pip \
+# 使用 apt 安装运行时与工具链，并安装 Node.js 24 + GitHub CLI（gh）。
+# - nodejs (v24)：openclaw CLI 依赖（通过 NodeSource 安装）。
+# - python3/pip：Python 运行时与 boto3 依赖。
+# - git/git-lfs/awscli(v2)：CI/CD 与仓库操作工具。
+# - gh：GitHub CLI（按官方 apt 源安装）。
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      gpg \
       git \
       git-lfs \
-      awscli-2 \
-      ca-certificates \
-      shadow-utils \
-      'dnf-command(config-manager)' && \
-    dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo && \
-    dnf install -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs gh --repo gh-cli && \
-    dnf clean all && \
-    rm -rf /var/cache/dnf
+      mawk \
+      python3 \
+      python3-pip \
+      python3-venv \
+      tzdata \
+      unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    mkdir -p /etc/apt/keyrings; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list; \
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash -; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends nodejs gh; \
+    rm -rf /var/lib/apt/lists/*
+
+# 安装 AWS CLI v2（Ubuntu apt 的 awscli 往往是 v1）。
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    case "${arch}" in \
+      x86_64) aws_arch="x86_64" ;; \
+      aarch64|arm64) aws_arch="aarch64" ;; \
+      *) echo "Unsupported arch for AWS CLI v2: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_arch}.zip" -o /tmp/awscliv2.zip; \
+    unzip -q /tmp/awscliv2.zip -d /tmp; \
+    /tmp/aws/install; \
+    rm -rf /tmp/aws /tmp/awscliv2.zip; \
+    aws --version
 
 # 全局安装 OpenClaw CLI / ClawHub / Gemini CLI，并安装 AWS 自动化常用的 boto3。
-RUN if ! command -v node >/dev/null 2>&1 && command -v node-24 >/dev/null 2>&1; then ln -sf /usr/bin/node-24 /usr/local/bin/node; fi && \
-    if ! command -v npm >/dev/null 2>&1 && command -v npm-24 >/dev/null 2>&1; then ln -sf /usr/bin/npm-24 /usr/local/bin/npm; fi && \
-    node --version && npm --version && \
+RUN node --version && npm --version && \
     npm install -g --no-audit "openclaw@${OPENCLAW_VERSION}" && \
     npm install -g --no-audit clawhub && \
     npm install -g --no-audit @google/gemini-cli && \
     npm cache clean --force && \
-    python3.13 -m pip install --no-cache-dir --upgrade pip boto3
-
-# 统一 python/pip 命令名，避免版本差异导致命令不一致。
-RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python3 && \
-    ln -sf /usr/bin/python3.13 /usr/local/bin/python && \
-    ln -sf /usr/bin/pip3.13 /usr/local/bin/pip3 && \
-    ln -sf /usr/bin/pip3.13 /usr/local/bin/pip
+    python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip boto3 && \
+    python3 --version && pip3 --version
 
 # 在系统范围启用 Git LFS。
 RUN git lfs install --system
 
 # 创建非 root 用户，提升运行安全性。
-RUN useradd -m -u 1000 -s /sbin/nologin node && \
+RUN useradd -m -u 1000 -s /usr/sbin/nologin node && \
     mkdir -p "${OPENCLAW_HOME}" "${XDG_CONFIG_HOME}" "${GH_CONFIG_DIR}" && \
     chown -R node:node /home/node && \
     chmod 700 "${OPENCLAW_HOME}"
@@ -81,7 +100,7 @@ EXPOSE 18789
 
 # 基础健康检查：检查本地 gateway 端口是否可连通。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD python3.13 -c "import os,socket; s=socket.socket(); s.settimeout(3); s.connect(('127.0.0.1', int(os.getenv('OPENCLAW_PORT','18789')))); s.close()" || exit 1
+  CMD python3 -c "import os,socket; s=socket.socket(); s.settimeout(3); s.connect(('127.0.0.1', int(os.getenv('OPENCLAW_PORT','18789')))); s.close()" || exit 1
 
 ENTRYPOINT ["/usr/local/bin/openclaw-entrypoint.sh"]
 CMD []

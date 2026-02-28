@@ -2,6 +2,8 @@
 
 目标：GitHub Actions 构建并推送镜像到 Docker Hub；服务器侧只需要 `docker pull` + `docker run`。
 
+镜像基础：Ubuntu 24.04 LTS + Node.js 24。
+
 重要安全提示：不要把 `GH_TOKEN` / `DISCORD_BOT_TOKEN` / `CLOUDFLARE_API_TOKEN` 贴到任何聊天/Issue/日志里；一旦泄露请立刻撤销并重发。
 
 ## 1) 拉取镜像
