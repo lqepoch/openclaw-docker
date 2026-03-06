@@ -1,153 +1,160 @@
-# OpenClaw Docker 教程（docker run）
+# OpenClaw Docker
 
-目标：GitHub Actions 构建并推送镜像到 Docker Hub；服务器侧只需要 `docker pull` + `docker run`。
+This repository builds and publishes an OpenClaw container image for `linux/amd64`.
 
-镜像基础：Ubuntu 24.04 LTS + Node.js 24。
+The image now follows a stricter runtime contract:
 
-重要安全提示：不要把 `GH_TOKEN` / `DISCORD_BOT_TOKEN` / `CLOUDFLARE_API_TOKEN` 贴到任何聊天/Issue/日志里；一旦泄露请立刻撤销并重发。
+- No runtime self-update.
+- No background update loop.
+- No automatic config mutation unless explicitly enabled.
+- No automatic skill installation unless explicitly enabled.
+- `OPENCLAW_PORT` is respected by both the entrypoint and the healthcheck.
 
-## 1) 拉取镜像
+## Image tags
+
+CI resolves the current `openclaw@latest` npm version first, then passes that exact version into the Docker build. The pushed image tag and the installed OpenClaw version are expected to match.
+
+## Persistent data
+
+OpenClaw state lives in `/home/node/.openclaw`.
+
+Recommended volume:
 
 ```bash
-docker pull lqepoch/openclaw:latest
+docker volume create openclaw-data
 ```
 
-## 2) 准备持久化 volume
+## Minimal runtime
 
-OpenClaw 配置目录在容器内：`/home/node/.openclaw`。推荐用 named volume：
-
-```bash
-docker volume create openclaw-data-openai-1
-```
-
-## 3) `gateway.mode=local` 是什么？
-
-`gateway.mode=local` 是 OpenClaw 的网关运行模式设置：让 gateway 以 “local” 模式启动（通常用于本机/本容器可达的使用方式）。不设置时，gateway 可能无法正常启动或行为受限，所以本镜像会在启动时自动写入一次（重复写入无副作用）。
-
-## 4) 首次初始化（交互式）
-
-不要用 `--entrypoint sh`（会绕过镜像的 entrypoint，自动配置不会执行）。
+This is the lowest-side-effect way to run the gateway:
 
 ```bash
-docker run --rm -it \
-  -v openclaw-data-openai-1:/home/node/.openclaw \
-  -e GH_TOKEN="***" \
-  -e DISCORD_BOT_TOKEN="***" \
-  -e DISCORD_GUILD_IDS="***" \
-  -e DISCORD_USER_IDS="***" \
-  lqepoch/openclaw:latest sh
-```
-
-容器内执行：
-
-```bash
-gh auth status -h github.com || printf '%s' "${GH_TOKEN}" | gh auth login --hostname github.com --with-token
-openclaw doctor --fix
-openclaw onboard --install-daemon
-```
-
-退出容器：
-
-```bash
-exit
-```
-
-## 5) 常驻运行（daemon）
-
-如果你要从宿主机访问 `18789`，建议显式设置 `OPENCLAW_GATEWAY_BIND=lan`（让容器内监听 `0.0.0.0`）。
-
-```bash
-docker run -d --name openclaw-data-openai-1 \
+docker run -d --name openclaw \
   --restart unless-stopped \
-  -v openclaw-data-openai-1:/home/node/.openclaw \
-  -e GH_TOKEN="***" \
-  -e DISCORD_BOT_TOKEN="***" \
-  -e DISCORD_GUILD_IDS="***" \
-  -e DISCORD_USER_IDS="***" \
+  -v openclaw-data:/home/node/.openclaw \
+  -e OPENCLAW_AUTO_CONFIG=false \
+  -e OPENCLAW_CLAWHUB_AUTO_INSTALL=false \
   -e OPENCLAW_GATEWAY_BIND=lan \
   -p 18789:18789 \
   lqepoch/openclaw:latest
 ```
 
-## 6) 自动更新（默认开启）
+## Explicit bootstrap config
 
-镜像默认行为：
-- 每次启动 gateway 前都会尝试执行一次 `openclaw update`（仅在该命令支持非交互确认参数时才会执行；否则会跳过，避免容器卡住）。
-- 容器运行期间，会在北京时间每天 `05:00` 再尝试执行一次 `openclaw update`（无更新则无变化）。
+If you want the container to write the minimal gateway bootstrap config for you, enable it explicitly:
 
 ```bash
-# 如需关闭自动更新：
--e OPENCLAW_AUTO_UPDATE=false
+docker run --rm -it \
+  -v openclaw-data:/home/node/.openclaw \
+  -e OPENCLAW_AUTO_CONFIG=true \
+  lqepoch/openclaw:latest sh
 ```
 
-说明：
-- 如需“更新失败就不启动”，加：`-e OPENCLAW_AUTO_UPDATE_REQUIRED=true`
-- 如需关闭“每天 05:00 自动更新”，加：`-e OPENCLAW_DAILY_UPDATE=false`
+When `OPENCLAW_AUTO_CONFIG=true`, the entrypoint only writes:
 
-## 7)（可选）安装 ClawHub skills
+- `gateway.mode=local`
+- Discord plugin enablement when Discord-related environment variables are present
+- Discord allowlist config when both `DISCORD_GUILD_IDS` and `DISCORD_USER_IDS` are provided
 
-镜像默认会在首次启动时自动安装 GitHub skill：`steipete/github`（只安装一次；后续重启不重复安装）。
+It no longer writes unrelated personal preference defaults on every startup.
 
-如果你还想额外安装多个 skills，用 `OPENCLAW_CLAWHUB_EXTRA_SKILLS`（空格/逗号分隔，支持 URL 或 `owner/slug`）：
+## Discord bootstrap
+
+Discord allowlist bootstrap is optional and only runs when all of these are true:
+
+- `OPENCLAW_AUTO_CONFIG=true`
+- `DISCORD_GUILD_IDS` is set
+- `DISCORD_USER_IDS` is set
+
+Multiple guild IDs and user IDs are supported. Separate them with commas or spaces:
 
 ```bash
--e OPENCLAW_CLAWHUB_EXTRA_SKILLS="owner2/skill2,https://clawhub.ai/owner3/skill3"
+-e DISCORD_GUILD_IDS="1234567890,2345678901" \
+-e DISCORD_USER_IDS="1111111111 2222222222"
 ```
 
-如需关闭自动安装：
+## Optional skill installation
+
+Automatic skill installation is now disabled by default. If you explicitly enable it, installation runs once and writes a sentinel only after at least one install succeeds.
 
 ```bash
--e OPENCLAW_CLAWHUB_AUTO_INSTALL=false
+docker run --rm -it \
+  -v openclaw-data:/home/node/.openclaw \
+  -e OPENCLAW_CLAWHUB_AUTO_INSTALL=true \
+  -e OPENCLAW_CLAWHUB_EXTRA_SKILLS="owner2/skill2,https://clawhub.ai/owner3/skill3" \
+  lqepoch/openclaw:latest sh
 ```
 
-## 8) 本镜像启动时会自动写入哪些配置？
+## Port binding
 
-`docker/entrypoint.sh` 会按以下顺序写入（尽量贴近你给的清单）：
+The image respects `OPENCLAW_PORT`.
 
-1. `openclaw config set gateway.mode local`
-2. 检测到 Discord 环境变量时启用插件：`openclaw plugins enable discord`
-3. Discord allowlist（单 guild + 单 user）：
-   - `openclaw config set 'channels.discord.groupPolicy' 'allowlist'`
-   - `openclaw config unset 'channels.discord.guilds'`
-   - `openclaw config set --json 'channels.discord.guilds' "$JSON_CONFIG"`（若不支持 `--json` 会自动回退到普通 `config set`）
-4. 其余偏好项：
-   - `agents.defaults.thinkingDefault=medium`
-   - `messages.ackReaction=👀`
-   - `messages.ackReactionScope=group-all`
-   - `messages.removeAckAfterReply=false`
-   - `commands.config=true`
-   - `channels.discord.configWrites=true`
-
-## 9) 检查与排障
-
-查看日志：
+Example:
 
 ```bash
-docker logs -f openclaw-data-openai-1
+docker run -d --name openclaw-alt-port \
+  --restart unless-stopped \
+  -v openclaw-data:/home/node/.openclaw \
+  -e OPENCLAW_AUTO_CONFIG=true \
+  -e OPENCLAW_PORT=18790 \
+  -e OPENCLAW_GATEWAY_BIND=lan \
+  -p 18790:18790 \
+  lqepoch/openclaw:latest
 ```
 
-检查 Discord guilds 配置：
+## Healthcheck
+
+The image healthcheck performs an HTTP probe against the configured local gateway port. It does not treat a bare TCP accept as healthy.
+
+## Recommended hardened run options
+
+The image already runs as a non-root `node` user. For stricter runtime isolation, prefer:
 
 ```bash
-docker exec -it openclaw-data-openai-1 sh -lc "openclaw config get --json 'channels.discord.guilds'"
+docker run -d --name openclaw \
+  --restart unless-stopped \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --tmpfs /home/node/.cache:rw,noexec,nosuid,size=64m \
+  -v openclaw-data:/home/node/.openclaw \
+  -e OPENCLAW_AUTO_CONFIG=false \
+  -e OPENCLAW_CLAWHUB_AUTO_INSTALL=false \
+  -e OPENCLAW_GATEWAY_BIND=lan \
+  -p 18789:18789 \
+  lqepoch/openclaw:latest
 ```
 
-如果你修改了配置需要生效：
-- 最稳妥方式：`docker restart openclaw-data-openai-1`
-- 或进入容器尝试：`openclaw gateway restart`（若你的 OpenClaw 版本支持该命令）
+## Environment variables
 
-## 10) Gemini CLI（已内置）
+Supported runtime variables:
 
-本镜像在构建时已预装 `@google/gemini-cli`，容器内可直接使用 `gemini` 命令，不需要再手动执行 `brew install gemini-cli`。
+- `OPENCLAW_HOME` default: `/home/node/.openclaw`
+- `OPENCLAW_PORT` default: `18789`
+- `OPENCLAW_GATEWAY_BIND` optional bind mode passed to `openclaw gateway --bind`
+- `OPENCLAW_AUTO_CONFIG` default: `false`
+- `OPENCLAW_CLAWHUB_AUTO_INSTALL` default: `false`
+- `OPENCLAW_CLAWHUB_EXTRA_SKILLS` optional extra skill list
+- `GH_TOKEN` or `GITHUB_TOKEN` optional GitHub token for git/gh auth setup
+- `DISCORD_BOT_TOKEN` optional Discord bot token
+- `DISCORD_GUILD_IDS` optional Discord guild IDs, comma- or space-separated
+- `DISCORD_USER_IDS` optional Discord user IDs, comma- or space-separated
 
-验证：
+## Local checks
+
+Logs:
 
 ```bash
-docker exec -it openclaw-data-openai-1 sh -lc "gemini --version"
+docker logs -f openclaw
 ```
 
-首次鉴权可在容器内执行（按提示完成）：
+Inspect Discord config:
 
 ```bash
-docker exec -it openclaw-data-openai-1 sh -lc "gemini auth login"
+docker exec -it openclaw sh -lc "openclaw config get --json 'channels.discord.guilds'"
+```
+
+Check the installed OpenClaw version:
+
+```bash
+docker exec -it openclaw sh -lc "openclaw --version"
 ```

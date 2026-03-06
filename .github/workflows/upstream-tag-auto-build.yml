@@ -1,10 +1,10 @@
-name: 跟踪上游 tag 自动构建镜像
+name: Track upstream tag and auto-build image
 
 on:
   workflow_dispatch:
   schedule:
-    # GitHub Actions 的 cron 按 UTC 解释：每 2 小时一次（00:00 UTC 开始）。
-    - cron: '0 */6 * * *'
+    # GitHub Actions cron uses UTC. Run every 3 hours starting at 00:00 UTC.
+    - cron: '0 */3 * * *'
 
 concurrency:
   group: upstream-tag-auto-build
@@ -21,7 +21,7 @@ env:
 
 jobs:
   detect:
-    name: 检测上游最新 tag
+    name: Detect latest upstream tag
     runs-on: ubuntu-latest
     outputs:
       upstream_tag: ${{ steps.detect.outputs.upstream_tag }}
@@ -29,17 +29,17 @@ jobs:
       marker_tag: ${{ steps.detect.outputs.marker_tag }}
       should_build: ${{ steps.detect.outputs.should_build }}
     steps:
-      - name: 拉取代码
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 配置 Node 24（用于 npm view 获取 latest）
+      - name: Set up Node 24
         uses: actions/setup-node@v4
         with:
           node-version: "24"
 
-      - name: 检测是否有新 tag
+      - name: Detect whether a new upstream tag requires a rebuild
         id: detect
         run: |
           set -euo pipefail
@@ -48,7 +48,7 @@ jobs:
 
           npm_version="$(npm view openclaw@latest version)"
           if [ -z "${npm_version}" ]; then
-            echo "未获取到 npm 上 openclaw 的 latest 版本号，终止本次流程。" >&2
+            echo "Failed to resolve npm latest version for openclaw." >&2
             exit 1
           fi
           upstream_tag="v${npm_version}"
@@ -56,10 +56,6 @@ jobs:
           marker_tag="${MARKER_TAG_PREFIX}${upstream_tag}"
           should_build="true"
 
-          # 规则：
-          # - marker tag 不存在：说明该上游版本从未构建过 -> 构建。
-          # - marker tag 存在但不指向当前 HEAD：说明本仓库内容变更过，需要重建/重新推送 -> 构建。
-          # - marker tag 存在且指向当前 HEAD：无需重复构建 -> 不构建。
           if git rev-parse -q --verify "refs/tags/${marker_tag}" >/dev/null; then
             tagged_commit="$(git rev-parse "${marker_tag}")"
             head_commit="$(git rev-parse HEAD)"
@@ -73,26 +69,26 @@ jobs:
           echo "marker_tag=${marker_tag}" >> "$GITHUB_OUTPUT"
           echo "should_build=${should_build}" >> "$GITHUB_OUTPUT"
 
-          echo "最新上游 tag: ${upstream_tag}"
-          echo "用于 npm 安装的版本: ${npm_version}"
-          echo "标记 tag: ${marker_tag}"
-          echo "是否构建: ${should_build}"
+          echo "Latest upstream tag: ${upstream_tag}"
+          echo "npm version used for build: ${npm_version}"
+          echo "Marker tag: ${marker_tag}"
+          echo "Should build: ${should_build}"
 
   build-and-push:
-    name: 构建并发布镜像
+    name: Build and publish image
     needs: detect
     if: needs.detect.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: 拉取代码
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 配置 Docker Buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: 构建镜像（本地加载）
+      - name: Build image (load locally)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -104,19 +100,47 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            OPENCLAW_VERSION=latest
+            OPENCLAW_VERSION=${{ needs.detect.outputs.npm_version }}
 
-      - name: 运行基础功能测试
+      - name: Run CLI smoke test
         run: |
+          set -euo pipefail
           docker run --rm \
             -e OPENCLAW_AUTO_CONFIG=false \
             local/${{ env.IMAGE_NAME }}:amd64-test \
             sh -lc "node --version && npm --version && python3 --version && pip3 --version && git --version && gh --version && aws --version && openclaw --version"
 
-      - name: 运行端口校验测试
-        run: echo "Skipped (port fixed to 18789)"
+      - name: Run integration startup test
+        run: |
+          set -euo pipefail
 
-      - name: 解析上游 tag（vX.Y.Z -> vX / vX.Y）
+          cid="$(docker run -d \
+            -e OPENCLAW_AUTO_CONFIG=true \
+            -e OPENCLAW_CLAWHUB_AUTO_INSTALL=false \
+            -e OPENCLAW_PORT=18790 \
+            -p 18790:18790 \
+            local/${{ env.IMAGE_NAME }}:amd64-test)"
+
+          cleanup() {
+            docker logs "${cid}" || true
+            docker rm -f "${cid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 30); do
+            status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${cid}")"
+            if [ "${status}" = "healthy" ]; then
+              break
+            fi
+            sleep 2
+          done
+
+          status="$(docker inspect --format '{{.State.Health.Status}}' "${cid}")"
+          test "${status}" = "healthy"
+
+          curl --fail --silent --show-error http://127.0.0.1:18790/ >/dev/null
+
+      - name: Derive semantic version aliases
         id: semver
         env:
           UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
@@ -131,28 +155,28 @@ jobs:
               minor_tag="$(printf '%s' "${UPSTREAM_TAG}" | awk -F. '{print $1"."$2}')"
               ;;
             *)
-              echo "[warn] UPSTREAM_TAG 格式非 vX.Y.Z，跳过主/次版本标签：${UPSTREAM_TAG}" >&2
+              echo "[warn] UPSTREAM_TAG is not in vX.Y.Z format, skipping major/minor aliases: ${UPSTREAM_TAG}" >&2
               ;;
           esac
 
           echo "major_tag=${major_tag}" >> "$GITHUB_OUTPUT"
           echo "minor_tag=${minor_tag}" >> "$GITHUB_OUTPUT"
 
-      - name: 登录 Docker Hub
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 登录 GHCR
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 推送镜像（仅推送上游版本标签）
+      - name: Push upstream version tags
         env:
           UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
         run: |
@@ -170,7 +194,7 @@ jobs:
           docker push "${dockerhub_tag}"
           docker push "${ghcr_tag}"
 
-      - name: 同步 latest / 主次版本标签（imagetools，无需重复推送 layers）
+      - name: Sync latest and major/minor aliases with imagetools
         env:
           UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
           MAJOR_TAG: ${{ steps.semver.outputs.major_tag }}
@@ -194,7 +218,7 @@ jobs:
           docker buildx imagetools create ${dockerhub_tags} "${src_dockerhub}"
           docker buildx imagetools create ${ghcr_tags} "${src_ghcr}"
 
-      - name: 写入已处理 marker tag
+      - name: Update marker tag
         env:
           MARKER_TAG: ${{ needs.detect.outputs.marker_tag }}
         run: |
@@ -202,34 +226,33 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # marker tag 用于“是否需要重建”的标记，允许随本仓库变更而更新指向。
           git tag -f "${MARKER_TAG}"
           git push -f origin "refs/tags/${MARKER_TAG}"
 
   sync-latest:
-    name: 同步 latest 标签（无需重新构建）
+    name: Sync latest aliases without rebuilding
     needs: detect
     if: needs.detect.outputs.should_build == 'false'
     runs-on: ubuntu-latest
     steps:
-      - name: 配置 Docker Buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: 登录 Docker Hub
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: 登录 GHCR
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 同步 latest / 主次版本标签（imagetools）
+      - name: Sync latest and major/minor aliases
         env:
           UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
         run: |
@@ -238,7 +261,6 @@ jobs:
           dockerhub_repo="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
           ghcr_repo="ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
 
-          # 解析 vX.Y.Z -> vX 以及 vX.Y（上游 tag 不符合预期格式时跳过）
           major_tag=""
           minor_tag=""
           case "${UPSTREAM_TAG}" in
@@ -247,7 +269,7 @@ jobs:
               minor_tag="$(printf '%s' "${UPSTREAM_TAG}" | awk -F. '{print $1"."$2}')"
               ;;
             *)
-              echo "[warn] UPSTREAM_TAG 格式非 vX.Y.Z，跳过主/次版本标签：${UPSTREAM_TAG}" >&2
+              echo "[warn] UPSTREAM_TAG is not in vX.Y.Z format, skipping major/minor aliases: ${UPSTREAM_TAG}" >&2
               ;;
           esac
 
@@ -258,8 +280,5 @@ jobs:
             ghcr_tags="${ghcr_tags} --tag ${ghcr_repo}:${major_tag} --tag ${ghcr_repo}:${minor_tag}"
           fi
 
-          echo "同步 Docker Hub tags -> ${UPSTREAM_TAG}"
           docker buildx imagetools create ${dockerhub_tags} "${dockerhub_repo}:${UPSTREAM_TAG}"
-
-          echo "同步 GHCR tags -> ${UPSTREAM_TAG}"
           docker buildx imagetools create ${ghcr_tags} "${ghcr_repo}:${UPSTREAM_TAG}"
