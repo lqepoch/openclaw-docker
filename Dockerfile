@@ -6,6 +6,7 @@ FROM ubuntu:24.04
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     DEBIAN_FRONTEND=noninteractive \
+    HOME=/home/node \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
@@ -93,10 +94,10 @@ RUN set -eux; \
 COPY docker/entrypoint.sh /usr/local/bin/openclaw-entrypoint.sh
 RUN chmod +x /usr/local/bin/openclaw-entrypoint.sh
 
-WORKDIR /workspace
+WORKDIR /home/node/workspace
 
 # 确保非 root 用户在 /workspace 下可写（避免在容器内操作时报权限错误）。
-RUN mkdir -p /workspace && chown -R node:node /workspace
+RUN mkdir -p /home/node/workspace /home/node/.cache && chown -R node:node /home/node
 
 USER node
 
@@ -105,7 +106,7 @@ EXPOSE 18789
 
 # 基础健康检查：检查本地 gateway 端口是否可连通。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD python3 -c "import os,socket; s=socket.socket(); s.settimeout(3); s.connect(('127.0.0.1', int(os.getenv('OPENCLAW_PORT','18789')))); s.close()" || exit 1
+  CMD python3 -c "import os,socket; port=int(os.getenv('OPENCLAW_PORT','18789')); s=socket.create_connection(('127.0.0.1', port), timeout=3); s.sendall(b'GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n'); data=s.recv(32); s.close(); raise SystemExit(0 if data.startswith(b'HTTP/') else 1)" || exit 1
 
 ENTRYPOINT ["/usr/local/bin/openclaw-entrypoint.sh"]
 CMD []
