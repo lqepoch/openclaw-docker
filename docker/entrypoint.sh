@@ -70,7 +70,7 @@ if [ "${OPENCLAW_AUTO_CONFIG}" = "true" ]; then
   openclaw config set gateway.mode local
 
   if [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${DISCORD_GUILD_IDS:-}" ] || [ -n "${DISCORD_USER_IDS:-}" ] || [ -n "${DISCORD_CHANNEL_IDS:-}" ]; then
-    openclaw plugins enable discord >/dev/null
+    openclaw plugins enable discord >/dev/null 2>&1 || true
   fi
 
   if [ -n "${DISCORD_GUILD_IDS:-}" ] && [ -n "${DISCORD_USER_IDS:-}" ]; then
